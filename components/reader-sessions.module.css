@@ -1,0 +1,19 @@
+.panel{flex:none;border-top:1px solid var(--border);background:var(--background);color:var(--foreground);font-size:11px}
+.header{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:42px;padding:0 14px}
+.toggle{display:flex;align-items:center;gap:9px;min-width:0;flex:1;text-align:left;cursor:pointer;font-size:11px}
+.toggle>svg:last-child{margin-left:auto;color:var(--muted-foreground)}
+.count{display:grid;place-items:center;min-width:19px;height:19px;border-radius:5px;background:var(--accent);color:var(--muted-foreground);font-size:10px}
+.summary,.waiting{font-size:10px;color:var(--muted-foreground)}
+.waiting{color:#dcb68e}.settings{padding:7px;cursor:pointer;color:var(--muted-foreground);border-radius:5px}.settings:hover{background:var(--accent);color:var(--foreground)}
+.list{max-height:230px;overflow:auto;padding:0 14px 12px;display:grid;gap:8px;scrollbar-width:thin}
+.empty{margin:0;padding:6px 0;color:var(--muted-foreground);font-size:10px;line-height:1.7}
+.card{border:1px solid var(--border);border-radius:7px;padding:11px 12px;background:var(--card)}
+.cardHeading{display:flex;gap:7px;align-items:center}.cardHeading strong{font-size:10px;font-weight:500}.state{margin-left:auto;font-size:9px;color:var(--muted-foreground)}
+.source{margin:5px 0 0;font-size:9px;color:var(--muted-foreground);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.dot{display:block;width:5px;height:5px;border-radius:50%;background:var(--muted-foreground);flex:none}.working,.starting{background:#c3a681;animation:pulse 1.5s ease-in-out infinite}.waiting{background:transparent}.dot.waiting{background:#dcb68e}.dot.error{background:#ce8d7c}.dot.ready{background:#a7b79a}
+.quote{margin:7px 0;color:var(--muted-foreground);font-size:11px;font-family:var(--font-sans3),sans-serif;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.actions{display:flex;align-items:center;gap:15px;margin-top:7px}.actions button{display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10px;color:#cbb498}.actions button:hover{color:var(--foreground)}.actions button+button{color:var(--muted-foreground)}
+.error{margin:7px 0 0;color:#da9c88;font-size:10px;line-height:1.5}
+.panel button:focus-visible{outline:1px solid #cbb498;outline-offset:3px}
+@keyframes pulse{50%{opacity:.4}}@media(prefers-reduced-motion:reduce){.working,.starting{animation:none}}
+@media(max-width:570px){.summary{display:none}.waiting{font-size:9px}.state{font-size:8px}.list{max-height:180px}}

@@ -2,7 +2,6 @@
 const { randomUUID } = require("node:crypto");
 const path = require("node:path");
 const { createRequire, registerHooks } = require("node:module");
-const { pathToFileURL } = require("node:url");
 const { PROVIDERS, fileStore, validateCredential, safeHttps, failure } = require("./subscription-store.cjs");
 
 const LABELS = { "github-copilot": "GitHub Copilot", xai: "Grok" };
@@ -26,12 +25,19 @@ async function loadSubscriptionSDK(baseDirectory) {
 		// Pi exports are import-only. Resolve the public export with ESM
 		// conditions, then remove this synchronous, exact-specifier hook
 		// BEFORE evaluation; no private package path or global hook remains.
+		// require.resolve bypasses synchronous resolve hooks on Windows/Node 24.
+		// A resolve-only require reaches the public export and stops before load.
+		const resolvedOnly = new Error("Resolved SDK export without evaluating it");
+		let target;
 		const hook = registerHooks({ resolve(specifier, context, next) {
-			return next(specifier, specifier === id ? { ...context, conditions: [...context.conditions, "import"] } : context);
+			if (specifier !== id) return next(specifier, context);
+			target = next(specifier, { ...context, conditions: [...context.conditions, "import"] }).url;
+			throw resolvedOnly;
 		} });
-		let file;
-		try { file = resolve.resolve(id); } finally { hook.deregister(); }
-		return import(pathToFileURL(file).href);
+		try { resolve(id); } catch (error) { if (error !== resolvedOnly) throw error; }
+		finally { hook.deregister(); }
+		if (!target || !target.startsWith("file:")) throw new Error("The provider SDK export could not be resolved.");
+		return import(target);
 	};
 	const [sdk, copilot, xai] = await Promise.all([load("@earendil-works/pi-ai"), load("@earendil-works/pi-ai/providers/github-copilot"), load("@earendil-works/pi-ai/providers/xai")]);
 	return { ...sdk, ...copilot, ...xai };

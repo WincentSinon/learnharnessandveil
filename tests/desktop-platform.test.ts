@@ -96,8 +96,9 @@ describe("desktop window chrome", () => {
 		runInNewContext(readFileSync(new URL("../electron/preload.cjs", import.meta.url), "utf8"), context);
 		assert.equal(bridge.platform, "win32");
 		assert.deepEqual(Object.keys(bridge).sort(), [
-			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "platform", "subscriptions",
+			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "overlay", "platform", "subscriptions",
 		]);
+		assert.deepEqual(Object.keys(bridge.overlay as object).sort(), ["hide", "open", "openPdf", "openSession", "setOpacity", "setPinned", "state"]);
 		assert.deepEqual(Object.keys(bridge.subscriptions as object).sort(), ["cancel", "consent", "disconnect", "login", "onChange", "open", "respond", "retry", "status"]);
 	});
 });
@@ -163,8 +164,8 @@ describe("desktop packaging policy", () => {
 		const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 		assert.equal(pkg.author.name, "Amos Blomqvist");
 		assert.equal(pkg.author.email, "255718537+amosblomqvist@users.noreply.github.com");
-		assert.equal(pkg.homepage, "https://github.com/amosblomqvist/learnharness");
-		assert.equal(pkg.desktopName, "learnharness.desktop");
+		assert.equal(pkg.homepage, "https://github.com/WincentSinon/learnharness");
+		assert.equal(pkg.desktopName, "veil-study.desktop");
 	});
 });
 

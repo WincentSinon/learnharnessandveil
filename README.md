@@ -1,3 +1,5 @@
+> **Veil Study productivity fork:** floating PDF reading, live opacity, and passage-linked teaching/practice sessions that work in the background. [Preview guide and Windows workflow](docs/veil-study.md). Based on LearnHarness and licensed under AGPL-3.0-only.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lh_banner_dark.png">

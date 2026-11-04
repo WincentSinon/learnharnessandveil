@@ -1,14 +1,14 @@
 {
-	"name": "learnharness",
-	"version": "0.4.1",
+	"name": "veil-study",
+	"version": "0.4.1-veil.1",
 	"license": "AGPL-3.0-only",
 	"author": {
 		"name": "Amos Blomqvist",
 		"email": "255718537+amosblomqvist@users.noreply.github.com"
 	},
-	"homepage": "https://github.com/amosblomqvist/learnharness",
-	"desktopName": "learnharness.desktop",
-	"description": "An agent harness for learning: adaptive teaching, practice, and a persistent knowledge graph.",
+	"homepage": "https://github.com/WincentSinon/learnharness",
+	"desktopName": "veil-study.desktop",
+	"description": "Floating PDF study workspace with background learning sessions, based on LearnHarness",
 	"type": "module",
 	"private": true,
 	"main": "electron/main.cjs",
@@ -16,12 +16,17 @@
 		"dev": "next dev",
 		"build": "next build",
 		"start": "next start",
-		"test": "NODE_ENV=test tsx --test tests/*.test.ts tests/*.test.tsx",
+		"test": "node scripts/run-tests.mjs",
 		"lint": "eslint .",
 		"typecheck": "tsc --noEmit",
 		"desktop:dev": "concurrently -k \"next dev\" \"LH_DEV_URL=http://localhost:3000 electron .\"",
 		"dev:fresh": "bash scripts/dev-fresh.sh",
-		"desktop:dist": "rm -rf dist .next/standalone && next build && node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs && DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} APPLE_KEYCHAIN_PROFILE=LH_NOTARY APPLE_TEAM_ID=JS6XN22HY6 electron-builder --mac --arm64"
+		"desktop:dist": "rm -rf dist .next/standalone && next build && node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs && DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} APPLE_KEYCHAIN_PROFILE=LH_NOTARY APPLE_TEAM_ID=JS6XN22HY6 electron-builder --mac --arm64",
+		"predev": "node scripts/prepare-reader-assets.mjs",
+		"prebuild": "node scripts/prepare-reader-assets.mjs",
+		"test:reader": "tsx --test tests/reader-*.test.ts tests/overlay-native.test.ts",
+		"desktop:windows": "npm run build && node scripts/build-server.mjs && electron-builder --win --dir --x64 --publish never",
+		"test:reader:ui": "node scripts/test-reader-ui.mjs"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "1.4.0",
@@ -96,5 +101,6 @@
 		"tailwindcss": "^4.3.3",
 		"tsx": "^4.19.0",
 		"typescript": "^5.6.0"
-	}
+	},
+	"productName": "Veil Study"
 }

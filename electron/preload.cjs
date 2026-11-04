@@ -40,6 +40,16 @@ ipcRenderer.on("lh:open-settings", (_event, section) => {
 
 contextBridge.exposeInMainWorld("lh", {
 	platform: process.platform,
+	// The floating reader is another owned app window, not a public API bridge.
+	overlay: {
+		open: () => ipcRenderer.invoke("lh:overlay:open"),
+		state: () => ipcRenderer.invoke("lh:overlay:state"),
+		setOpacity: (value) => ipcRenderer.invoke("lh:overlay:opacity", value),
+		setPinned: (value) => ipcRenderer.invoke("lh:overlay:pin", value),
+		hide: () => ipcRenderer.invoke("lh:overlay:hide"),
+		openPdf: () => ipcRenderer.invoke("lh:overlay:pdf"),
+		openSession: (id) => ipcRenderer.invoke("lh:overlay:session", id),
+	},
 	// Resolve only a renderer-supplied, OS-backed File. No filesystem API,
 	// uploads, copies, or DOM File IPC to main; sandbox/isolation stay on.
 	getPathForFile: (file) => webUtils.getPathForFile(file),

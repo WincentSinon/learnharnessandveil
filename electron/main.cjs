@@ -24,13 +24,14 @@
  *     would shadow every settings-page key change until restart.
  */
 
-const { app, BrowserWindow, Menu, ipcMain, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, session, shell, dialog, globalShortcut } = require("electron");
 const { createChatGPT, fileStore } = require("./chatgpt.cjs");
 const { attachChatGPTChild, trustedSender, chatGPTControl } = require("./chatgpt-ipc.cjs");
 const { createSubscriptions, loadSubscriptionSDK } = require("./subscriptions.cjs");
 const { attachSubscriptionChild, subscriptionControl } = require("./subscription-ipc.cjs");
 const { desktopAPIHeaders } = require("./desktop-api.cjs");
 const { openWebSubscriptionBrowser } = require("./web-subscription-browser.cjs");
+const { createOverlayController } = require("./overlay.cjs");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -42,7 +43,7 @@ const path = require("node:path");
 // renderer owns the number; this is the IPC widen target).
 const SIDEBAR_AUTOCLOSE = 928;
 
-const PRODUCT_NAME = "LearnHarness";
+const PRODUCT_NAME = "Veil Study";
 
 // APP NAME → userData (owner, 2026-10-10): the Application Support dir is
 // exactly "LearnHarness" in dev AND packaged. Packaged Electron would
@@ -124,9 +125,10 @@ if (process.argv.includes("--browser-service")) {
 		app.quit();
 	} else {
 		app.on("second-instance", () => {
-			const win = BrowserWindow.getAllWindows()[0];
+			const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getAllWindows()[0];
 			if (win) {
 				if (win.isMinimized()) win.restore();
+				win.show();
 				win.focus();
 			}
 		});
@@ -142,6 +144,8 @@ let subscriptionChild = null;
 // Per-launch request capability, never OAuth tokens and never renderer state.
 let desktopAPISecret = null;
 let reopenWindow = null;
+let mainWindow = null;
+let floatingReader = null;
 const trustedAppWindows = new Set();
 
 // A GUI shell must never die to a stray exception (EPIPE dialogs, a race
@@ -286,11 +290,12 @@ function killServer() {
  *    default, we do not);
  *  - will-navigate pinned to the app origin; window.open always denied —
  *    external links go to the real browser via shell.openExternal. */
-function createWindow(url) {
+function createWindow(url, { reader = false } = {}) {
 	const win = new BrowserWindow({
-		width: 1440,
-		height: 900,
+		width: reader ? 800 : 1440,
+		height: reader ? 880 : 900,
 		title: PRODUCT_NAME,
+		alwaysOnTop: reader,
 		// Merged chrome (owner, 2026-09-17): the system title bar is gone;
 		// the app's own 60px header bands ARE the title bar. The traffic
 		// lights float over the sidebar's LH wordmark band, vertically
@@ -334,10 +339,14 @@ function createWindow(url) {
 		// auto-closes below 928 = 640 + 288 (sidebar) in the renderer
 		// (components/sidebar.tsx, SIDEBAR_AUTOCLOSE); its "lh:expand-window"
 		// IPC widens the window back to that threshold.
-		minWidth: 640,
-		minHeight: 600,
+		minWidth: reader ? 500 : 640,
+		minHeight: reader ? 480 : 600,
 	});
 
+	if (!reader) {
+		mainWindow = win;
+		win.once("closed", () => { if (mainWindow === win) mainWindow = null; });
+	}
 	trustedAppWindows.add(win);
 	win.once("closed", () => trustedAppWindows.delete(win));
 	const allowedOrigin = () => new URL(url).origin;
@@ -504,6 +513,13 @@ function installUpdateNow() {
 }
 
 function setupAutoUpdater() {
+	// This fork never installs upstream releases over the reader integration.
+	// A deliberate fork-specific feed may be supplied when releases exist.
+	if (!process.env.LH_UPDATE_FEED) {
+		log("auto-update: fork has no configured release feed — updates disabled");
+		reportUpdateStatus("disabled");
+		return;
+	}
 	if (!app.isPackaged) {
 		log("auto-update: dev build — updater disabled");
 		reportUpdateStatus("disabled");
@@ -626,7 +642,17 @@ function installMenu() {
 				{ role: "togglefullscreen" },
 			],
 		},
-		{ role: "windowMenu" },
+		{
+			role: "windowMenu",
+			submenu: [
+				{
+					label: "Floating PDF reader",
+					accelerator: "CommandOrControl+Shift+P",
+					click: () => { void floatingReader?.open().catch(error => log(`reader: ${error?.message ?? error}`)); },
+				},
+				{ type: "separator" }, { role: "minimize" }, { role: "close" },
+			],
+		},
 	];
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -649,7 +675,7 @@ async function main() {
 	// Dev mode: point at a running `next dev` server (LH_DEV_URL) — no
 	// spawn, no packaging, full HMR. The rest of this shell still applies
 	// (guards, menu, single instance).
-	const devUrl = process.env.LH_DEV_URL;
+	const devUrl = process.env.LH_DEV_URL || undefined;
 	const url = devUrl ?? `http://127.0.0.1:${await freePort()}`;
 	if (!devUrl) {
 		desktopAPISecret = randomBytes(32).toString("hex");
@@ -709,6 +735,13 @@ async function main() {
 		await openWebSubscriptionBrowser(action, new URL(url).origin, { openExternal: (target) => shell.openExternal(target) });
 	});
 
+	floatingReader = createOverlayController({
+		app, BrowserWindow, dialog, ipcMain, globalShortcut,
+		origin: new URL(url).origin, trustedWindows: trustedAppWindows, trustedSender, log,
+		createReaderWindow: readerUrl => createWindow(readerUrl, { reader: true }),
+		getMainWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+		createMainWindow: () => createWindow(url),
+	});
 	installMenu();
 
 	// Auto-update (Wave C): wire the updater before the window so the
@@ -745,8 +778,9 @@ async function main() {
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) reopenWindow();
 	});
-	createWindow(url);
-	log(`window open: ${url}`);
+	if (process.env.LH_START_READER === "0") createWindow(url);
+	else await floatingReader.open();
+	log(`window open: ${process.env.LH_START_READER === "0" ? url : new URL("/reader", url).href}`);
 	// Startup + 24h checks stay main-owned and read the current preference.
 	// No renderer subscription is required; late loads retrieve the snapshot.
 	if (autoUpdater) {

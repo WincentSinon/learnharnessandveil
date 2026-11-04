@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon, BookOpenIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { fuzzyScore } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
-import type { ChatListItem } from "@/src/core";
+import type { ChatListItem, ReaderOverlayBridge } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
@@ -60,6 +60,7 @@ declare global {
 	interface Window {
 		/** Preload bridge (electron/preload.cjs) — Electron only, absent in the browser. */
 		lh?: {
+			overlay?: ReaderOverlayBridge;
 			/** Read-only host OS; determines the native-control gutter. */
 			platform?: string;
 			/** Resolve an OS-backed File without copying/uploading its contents. */
@@ -200,6 +201,8 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
  *  no popping in either direction. */
 export function SidebarToggle() {
 	const { open, toggle } = useSidebar();
+	const pathname = usePathname();
+	if (pathname === "/reader") return null;
 	return (
 		<span
 			className={cn(
@@ -699,6 +702,15 @@ function SessionsSidebar() {
 				<div className="mx-3 mb-2 flex flex-col gap-1.5">
 					<button
 						type="button"
+						data-testid="open-floating-reader"
+						onClick={() => { if (window.lh?.overlay) void window.lh.overlay.open(); else router.push("/reader"); }}
+						className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					>
+						<BookOpenIcon className="size-3" />
+						Floating reader
+					</button>
+					<button
+						type="button"
 						data-testid="new-session"
 						onClick={() => void newSession()}
 						className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -944,14 +956,17 @@ function SessionsSidebar() {
 
 /** The app frame: sidebar inline + content. Rendered once in the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
+	const isReader = usePathname() === "/reader";
 	return (
 		<SettingsDialogProvider>
-			<SessionsSidebar />
-			<FilePathDropZone className="relative min-w-0 flex-1">{children}</FilePathDropZone>
+			{isReader ? <div className="relative min-w-0 flex-1" data-reader-shell>{children}</div> : <>
+				<SessionsSidebar />
+				<FilePathDropZone className="relative min-w-0 flex-1">{children}</FilePathDropZone>
+			</>}
 			{/* The single document-level keydown listener (keyboard wave A) —
 			    after the content in the tree, but it's window-level so order only
 			    matters for the events it dispatches, never for DOM priority. */}
-			<KeyboardShortcuts />
+			{!isReader && <KeyboardShortcuts />}
 		</SettingsDialogProvider>
 	);
 }

@@ -21,6 +21,7 @@ export * from "./chains.ts";
 export * from "./source-organization.ts";
 export * from "./source-selection.ts";
 export * from "./source-label.ts";
+export * from "./reader-study.ts";
 export * from "./render-settings.ts";
 
 export * from "./question-core.ts";
