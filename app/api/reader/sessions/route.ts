@@ -1,11 +1,13 @@
-import { readerStore } from "@/src/server";
+import { readerStore, readReaderSessionUpload, ReaderUploadError } from "@/src/server";
 export const runtime = "nodejs";
 export async function GET() { return Response.json({ sessions: readerStore.list() }); }
 export async function POST(request: Request) {
 	try {
-		const form = await request.formData(); const file = form.get("file");
-		if (!(file instanceof File) || file.size > 100 * 1024 * 1024) throw new Error("Choose a PDF smaller than 100 MB.");
-		const state = JSON.parse(String(form.get("state")));
+		const { file, state } = await readReaderSessionUpload(request);
 		return Response.json({ session: readerStore.create(file.name, new Uint8Array(await file.arrayBuffer()), state) }, { status: 201 });
-	} catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Could not save reading session." }, { status: 400 }); }
+	} catch (error) {
+		if (error instanceof ReaderUploadError) return Response.json({ error: error.message, code: error.code }, { status: error.status });
+		if (error instanceof Error && !("code" in error)) return Response.json({ error: error.message, code: "reader_session_invalid" }, { status: 400 });
+		return Response.json({ error: "The reading session could not be saved to local storage. Please try again.", code: "reader_storage_error" }, { status: 500 });
+	}
 }

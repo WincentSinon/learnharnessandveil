@@ -168,6 +168,7 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 		} catch (failure) { if (owner === epoch.current) { setError(failure instanceof Error ? failure.message : "The check could not start."); setChecking(false); } }
 	}
 	const pageAttempts = attempts.filter(attempt => attempt.page === props.page).toReversed();
+	const modelSetupError = /^(Configure a strong model in Settings|Connect the selected AI provider in Settings)/.test(error);
 	return <>
 		<div className={styles.bar} aria-label="Reading session controls">
 			<button type="button" onClick={() => { setPanel(panel === "library" ? null : "library"); void refreshLibrary().catch(failure => setError(String(failure))); }} data-testid="reader-library"><BookMarkedIcon />My reading</button>
@@ -178,7 +179,7 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 		{panel && <div className={styles.backdrop} onPointerDown={event => { if (event.target === event.currentTarget) setPanel(null); }}>
 			<section ref={panelElement} className={styles.panel} role="dialog" aria-modal="true" aria-label={panel === "library" ? "Saved reading sessions" : "Check understanding"} data-testid="reader-workspace-panel">
 				<header><div><small>YOUR READING WORKSPACE</small><h2>{panel === "library" ? "Pick up where you left off." : `Explain page ${props.page}.`}</h2></div><button type="button" aria-label="Close reading panel" onClick={() => setPanel(null)}><XIcon /></button></header>
-				{error && <div className={styles.error} role="alert">{error}<button type="button" onClick={() => openSettings("agent")}>Model settings</button></div>}
+				{error && <div className={styles.error} role="alert">{error}{modelSetupError && <button type="button" onClick={() => openSettings("agent")}>Model settings</button>}</div>}
 				{panel === "library" ? <>
 					<p>PDFs, your place, voice settings, and understanding checks stay on this computer. Resuming never starts speech.</p>
 					{!library.length && <div className={styles.empty}>Open a PDF and choose <b>Save session</b> to start your library.</div>}

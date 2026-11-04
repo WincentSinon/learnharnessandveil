@@ -2,6 +2,13 @@
 
 This is a Windows development preview based on upstream LearnHarness commit `e69e85269c064c6c9c49a8b06ae78c06e79c4a63`. The fork's first version is `0.4.1-veil.1`.
 
+## Large PDF upload fix — 0.4.1-veil.4
+
+- Fixed the shared Next proxy's 26 MiB buffer truncating reading-session PDFs, despite the reader's 100 MiB allowance. Reader file/state/body limits are now explicit, with multipart headroom and a larger proxy buffer. The separate notes-import limits remain 25 MiB for files and 26 MiB for its request.
+- The reader counts actual body bytes before multipart parsing, validates file/metadata fields, and returns clear 400/413 errors for incomplete or oversized requests. Upload failures retain the current explanation and no longer display an unrelated Model settings action.
+- 37 focused tests pass across upload limits/parser, existing notes import, reader persistence/checks and desktop access. Typecheck and ESLint pass with the existing upstream warning.
+- A real 33,555,450-byte PDF saves through normal UI and the actual Next proxy in both development and the packaged application, roundtrips with identical SHA-256, and restores after app/server restart with the original file removed. Malformed-upload UI tests retain the draft and show the correct action. No AI request is made by this regression.
+
 ## Reading workspace update — 0.4.1-veil.3
 
 - Added local neural English LJ and Swedish Alma voices, a voice preview, bounded sentence generation, cancellation, and sentence highlights driven by actual audio playback. The voice runtime/models are publisher downloads in the app's local data cache, with pinned SHA-256/size checks. No Python, GPU, speech API key, or inference network request is required.

@@ -58,3 +58,4 @@ export { customProviderGet, customProviderMutation } from "./custom-provider-htt
 export { readerStore } from "./stores.ts";
 export { startReaderCheck, readReaderAttempt } from "./reader-check.ts";
 export { neuralStatus, installNeuralVoices, synthesizeNeural } from "./reader-neural-speech.ts";
+export { readReaderSessionUpload, ReaderUploadError } from "./reader-session-upload.ts";
