@@ -1,4 +1,5 @@
 import type { ReaderSpeechBridge, ReaderSpeechState, ReaderSpeechVoice } from "@/src/core";
+import { buildPdfSpeech } from "@/src/core";
 
 export interface NarrationState {
 	status: "idle" | "loading" | "speaking" | "paused" | "error";
@@ -17,15 +18,7 @@ export const EMPTY_NARRATION: NarrationState = {
 
 /** PDF text runs retain their line breaks; marked-content records are not speech. */
 export function pageSpeechText(items: readonly unknown[]): string {
-	let text = "";
-	for (const item of items) {
-		if (!item || typeof item !== "object" || !("str" in item) || typeof item.str !== "string") continue;
-		const value = item.str.replace(/[\u0000\u00ad]/g, "");
-		if (text && !/\s$/.test(text) && value && !/^\s/.test(value)) text += " ";
-		text += value;
-		if ("hasEOL" in item && item.hasEOL) text += "\n";
-	}
-	return text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+	return buildPdfSpeech(items).text;
 }
 
 function errorMessage(error: unknown) {
@@ -42,14 +35,17 @@ export class ReaderNarration {
 	private nativePaused = false;
 	private disposed = false;
 	private off: () => void;
+	private offProgress: () => void;
 
 	constructor(
 		private bridge: ReaderSpeechBridge,
 		private textForPage: (page: number) => Promise<string | null>,
 		private changed: (state: NarrationState) => void,
 		private newId: () => string = () => crypto.randomUUID(),
+		private progress: (value: { start: number; end: number; unit: "sentence" | "word" } | null) => void = () => {},
 	) {
 		this.off = bridge.onState(state => this.nativeState(state));
+		this.offProgress = bridge.onProgress?.(value => { if (!this.disposed && value.requestId === this.requestId) this.progress(value); }) ?? (() => {});
 	}
 
 	private update(patch: Partial<NarrationState>) {
@@ -63,13 +59,14 @@ export class ReaderNarration {
 			const voices = await this.bridge.voices();
 			if (this.disposed) return;
 			this.update({ voices, voice: voices[0]?.name ?? "", available: voices.length > 0,
-				message: voices.length ? "Reads this page. Follows you when you change pages." : "No Windows speech voices are installed." });
+				message: voices.length ? "Reads this page. Follows you when you change pages." : "Install local neural voices or choose an available desktop voice." });
 		} catch (error) { this.update({ status: "error", message: errorMessage(error) }); }
 	}
 
 	private nativeState(state: ReaderSpeechState) {
 		if (this.disposed || !this.requestId || state.requestId !== this.requestId) return;
 		if (state.status === "idle") {
+			this.progress(null);
 			this.revision++;
 			this.requestId = null;
 			this.following = this.paused = this.nativePaused = false;
@@ -80,6 +77,7 @@ export class ReaderNarration {
 
 	private invalidate() {
 		this.requestId = null;
+		this.progress(null);
 		return ++this.revision;
 	}
 
@@ -184,6 +182,7 @@ export class ReaderNarration {
 		this.invalidate();
 		this.disposed = true;
 		this.off();
+		this.offProgress();
 		void this.bridge.stop().catch(() => {});
 	}
 }

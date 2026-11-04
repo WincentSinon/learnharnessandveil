@@ -1,6 +1,6 @@
 {
 	"name": "veil-study",
-	"version": "0.4.1-veil.2",
+	"version": "0.4.1-veil.3",
 	"license": "AGPL-3.0-only",
 	"author": {
 		"name": "Amos Blomqvist",
@@ -27,7 +27,9 @@
 		"test:reader": "tsx --test tests/reader-*.test.ts tests/overlay-native.test.ts",
 		"desktop:windows": "npm run build && node scripts/build-server.mjs && electron-builder --win --dir --x64 --publish never",
 		"test:reader:ui": "node scripts/test-reader-ui.mjs",
-		"test:reader:speech": "tsx scripts/test-reader-speech.mjs"
+		"test:reader:speech": "tsx scripts/test-reader-speech.mjs",
+		"test:reader:workspace": "tsx scripts/test-reader-workspace.mjs",
+		"smoke:reader:neural": "tsx scripts/smoke-reader-neural.mjs"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "1.4.0",
@@ -52,8 +54,11 @@
 		"d3-shape": "^3.2.0",
 		"d3-zoom": "^3.0.0",
 		"dagre-d3-es": "7.0.14",
+		"dictionary-en": "^4.0.0",
+		"dictionary-sv": "^4.0.0",
 		"electron-updater": "^6.8.9",
 		"embla-carousel-react": "^8.6.0",
+		"fflate": "^0.8.3",
 		"jose": "^6.2.12",
 		"katex": "0.18.2",
 		"linkedom": "^0.18.13",
@@ -61,12 +66,13 @@
 		"mdast-util-from-markdown": "2.0.3",
 		"mdast-util-math": "3.0.0",
 		"media-chrome": "^4.19.2",
-		"micromark-extension-math": "3.1.0",
 		"mermaid": "^11.17.0",
+		"micromark-extension-math": "3.1.0",
 		"motion": "^13.1.1",
 		"nanoid": "^6.0.1",
 		"next": "^16.4.3",
 		"next-themes": "^0.4.6",
+		"nspell": "^2.1.5",
 		"pdfjs-dist": "^6.3.289",
 		"puppeteer-core": "^25.8.0",
 		"radix-ui": "^1.6.7",

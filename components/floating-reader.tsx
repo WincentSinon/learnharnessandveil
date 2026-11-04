@@ -7,7 +7,13 @@ import { ArrowDownToLineIcon, BookOpenIcon, ChevronLeftIcon, ChevronRightIcon, D
 import { TopBar } from "@/components/top-bar";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { ReaderSessions, openReaderSession, startPassageSession } from "@/components/reader-sessions";
-import { EMPTY_NARRATION, ReaderNarration, pageSpeechText } from "@/components/reader-narration";
+import { EMPTY_NARRATION, ReaderNarration } from "@/components/reader-narration";
+import { createNeuralSpeechBridge, neuralSpeechStatus, setupNeuralSpeech, type NeuralStatus } from "@/components/reader-neural-speech";
+import { ReaderWorkspace } from "@/components/reader-workspace";
+import { speechDictionary } from "@/components/reader-dictionaries";
+import { buildPdfSpeech, type PdfSpeech } from "@/src/core";
+import type { ReaderChapter, ReaderSession } from "@/src/core";
+import type { ReaderSpeechBridge } from "@/src/core";
 import styles from "./floating-reader.module.css";
 
 type PdfModule = typeof import("pdfjs-dist");
@@ -19,6 +25,8 @@ type Page = {
 	canvas: HTMLCanvasElement;
 	text: HTMLDivElement;
 	annotations: HTMLDivElement;
+	speechMarkers: HTMLDivElement;
+	textDivs?: HTMLElement[];
 	width: number;
 	height: number;
 	proxy: PDFPageProxy | null;
@@ -57,8 +65,12 @@ function messageOf(error: unknown) {
 	return error instanceof Error ? error.message : "The action could not be completed.";
 }
 
-/** Local PDF surface; no PDF bytes or page text leave this controller. */
+/** Local PDF rendering and extraction for explicit reading-workspace actions. */
 class PdfSurface {
+	private sourceFile: PdfFile | null = null;
+	private speechMap: { number: number; map: PdfSpeech } | null = null;
+	private speechProgress: { start: number; end: number } | null = null;
+	private restoringPosition = false;
 	private pdf: PDFDocumentProxy | null = null;
 	private loadingTask: PDFDocumentLoadingTask | null = null;
 	private pages: Page[] = [];
@@ -103,6 +115,7 @@ class PdfSurface {
 		this.opening = true;
 		this.callbacks.loading(true);
 		this.callbacks.documentChanging();
+		this.markSpeech(null);
 		try {
 			await this.loadingTask?.destroy().catch(() => {});
 			if (this.disposed || loadVersion !== this.loadVersion) return;
@@ -137,6 +150,8 @@ class PdfSurface {
 			void previous?.loadingTask.destroy().catch(() => {});
 			this.pages = [];
 			this.documentName = file.name;
+			this.sourceFile = file;
+			this.speechMap = null;
 			this.current = 1;
 			this.fit = true;
 			const native = first.getViewport({ scale: 1 });
@@ -154,12 +169,16 @@ class PdfSurface {
 				text.className = "textLayer";
 				const annotations = document.createElement("div");
 				annotations.className = styles.annotations ?? "";
+				const speechMarkers = document.createElement("div");
+				speechMarkers.className = styles.speechMarkers ?? "";
+				speechMarkers.setAttribute("aria-hidden", "true");
+				speechMarkers.dataset.speechMarkers = "true";
 				const label = document.createElement("span");
 				label.className = styles.pageLabel ?? "";
 				label.textContent = String(number).padStart(2, "0");
 				label.setAttribute("aria-hidden", "true");
-				node.append(canvas, text, annotations, label);
-				const page: Page = { number, node, canvas, text, annotations, width: native.width, height: native.height,
+				node.append(canvas, speechMarkers, text, annotations, label);
+				const page: Page = { number, node, canvas, text, annotations, speechMarkers, width: native.width, height: native.height,
 					proxy: number === 1 ? first : null, generation: 0, visible: false, busy: false, rendered: false };
 				this.size(page);
 				this.pages.push(page);
@@ -245,6 +264,8 @@ class PdfSurface {
 			page.textTask = new library.TextLayer({ textContentSource: content, container: page.text, viewport });
 			await page.textTask.render();
 			if (!current()) return;
+			page.textDivs = page.textTask.textDivs;
+			this.drawSpeech();
 			page.rendered = true;
 			page.node.dataset.rendered = "true";
 			if (page.number === this.current && !content.items.some((item) => "str" in item && item.str.trim())) {
@@ -295,13 +316,99 @@ class PdfSurface {
 		const pdf = this.pdf;
 		const version = this.loadVersion;
 		const record = this.pages[number - 1];
-		const current = () => !this.disposed && !this.opening && this.pdf === pdf && version === this.loadVersion;
+		const current = () => !this.disposed && !this.opening && this.pdf === pdf && version === this.loadVersion && number === this.current;
 		if (!pdf || !record || !current()) return null;
 		const page = record.proxy ?? await pdf.getPage(number);
 		if (!current()) return null;
 		const content = await page.getTextContent();
 		if (!current()) return null;
-		return pageSpeechText(content.items);
+		const dictionary = await speechDictionary();
+		if (!current()) return null;
+		const map = buildPdfSpeech(content.items, dictionary);
+		this.speechMap = { number, map };
+		return map.text;
+	}
+
+	getFile() { return this.sourceFile; }
+	position() {
+		const page = this.pages[this.current - 1];
+		return { pageCount: this.pdf?.numPages || 1, page: this.current, scrollFraction: page ? Math.max(-1, Math.min(2, (this.viewport.scrollTop - page.node.offsetTop) / (page.height * this.scale))) : 0, scale: this.scale, fit: this.fit };
+	}
+	async restorePosition(state: ReaderSession) {
+		const version = this.loadVersion;
+		this.restoringPosition = true;
+		clearTimeout(this.resizeTimer);
+		if (state.fit) this.fitWidth(); else this.zoom(state.scale, false);
+		this.navigate(state.page);
+		try {
+			// First-page canvas/text insertion and scroll anchoring must settle
+			// before restoring a later page's fractional position.
+			await new Promise(resolve => setTimeout(resolve, 200));
+			if (version !== this.loadVersion || this.disposed) return;
+			const page = this.pages[state.page - 1];
+			if (page) { this.viewport.scrollTop = page.node.offsetTop + state.scrollFraction * page.height * this.scale; this.current = state.page; this.callbacks.page(state.page); this.enqueue(page); }
+		} finally { this.restoringPosition = false; }
+	}
+	async extract(start: number, end: number) {
+		const pdf = this.pdf, version = this.loadVersion;
+		if (!pdf || this.opening || start < 1 || end > pdf.numPages || end < start || end - start >= 30) throw new Error("Choose a chapter range of up to 30 pages.");
+		const sources: Array<{ page: number; text: string }> = [];
+		const dictionary = await speechDictionary();
+		for (let page = start; page <= end; page++) {
+			const content = await (await pdf.getPage(page)).getTextContent();
+			if (version !== this.loadVersion || this.opening || this.disposed) throw new Error("The PDF changed while reading chapter context. Try again.");
+			sources.push({ page, text: buildPdfSpeech(content.items, dictionary).text });
+			if (sources.reduce((sum, item) => sum + item.text.length, 0) > 120_000) throw new Error("Choose a smaller chapter range (up to 120,000 characters).");
+		}
+		return sources;
+	}
+	async chapters(): Promise<ReaderChapter[]> {
+		const pdf = this.pdf; if (!pdf) return [];
+		const outline = await pdf.getOutline();
+		const starts: Array<{ title: string; start: number }> = [];
+		const visit = async (items: NonNullable<typeof outline>) => {
+			for (const item of items) {
+				if (starts.length >= 200 || this.pdf !== pdf) return;
+				try {
+					const destination = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
+					if (Array.isArray(destination) && destination[0] !== undefined) {
+						const start = typeof destination[0] === "number" ? destination[0] + 1 : (await pdf.getPageIndex(destination[0])) + 1;
+						if (start >= 1 && start <= pdf.numPages) starts.push({ title: item.title, start });
+					}
+				} catch { /* Unresolvable bookmark retains the manual range fallback. */ }
+				if (item.items?.length) await visit(item.items);
+			}
+		};
+		if (outline) await visit(outline);
+		starts.sort((a, b) => a.start - b.start);
+		return starts.map((item, index) => ({ ...item, end: Math.max(item.start, (starts.slice(index + 1).find(value => value.start > item.start)?.start ?? pdf.numPages + 1) - 1) }));
+	}
+	markSpeech(progress: { start: number; end: number } | null) {
+		this.speechProgress = progress;
+		for (const page of this.pages) page.speechMarkers.replaceChildren();
+		this.drawSpeech();
+	}
+	private drawSpeech() {
+		const map = this.speechMap, progress = this.speechProgress;
+		if (!map || !progress) return;
+		const page = this.pages[map.number - 1];
+		if (!page?.textDivs) return;
+		page.speechMarkers.replaceChildren();
+		const bounds = page.node.getBoundingClientRect();
+		for (const segment of map.map.segments) {
+			if (segment.end <= progress.start || segment.start >= progress.end) continue;
+			const node = page.textDivs[segment.itemIndex]?.firstChild;
+			if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+			const equalLength = segment.end - segment.start === segment.sourceEnd - segment.sourceStart;
+			const start = equalLength ? segment.sourceStart + Math.max(0, progress.start - segment.start) : segment.sourceStart;
+			const end = equalLength ? segment.sourceEnd - Math.max(0, segment.end - progress.end) : segment.sourceEnd;
+			const range = document.createRange(); range.setStart(node, Math.min(start, node.textContent?.length || 0)); range.setEnd(node, Math.min(end, node.textContent?.length || 0));
+			for (const rect of range.getClientRects()) {
+				const marker = document.createElement("i");
+				Object.assign(marker.style, { left: `${(rect.left - bounds.left) / bounds.width * 100}%`, top: `${(rect.top - bounds.top) / bounds.height * 100}%`, width: `${rect.width / bounds.width * 100}%`, height: `${rect.height / bounds.height * 100}%` });
+				page.speechMarkers.append(marker);
+			}
+		}
 	}
 
 	navigate(number: number) {
@@ -316,10 +423,10 @@ class PdfSurface {
 	}
 
 	private onScroll = () => {
-		if (!this.pdf || this.scrollFrame) return;
+		if (!this.pdf || this.scrollFrame || this.restoringPosition) return;
 		this.scrollFrame = requestAnimationFrame(() => {
 			this.scrollFrame = 0;
-			if (this.disposed) return;
+			if (this.disposed || this.restoringPosition) return;
 			const target = this.viewport.getBoundingClientRect().top + Math.min(180, this.viewport.clientHeight / 3);
 			let closest = this.pages[0];
 			for (const page of this.pages) {
@@ -371,6 +478,7 @@ class PdfSurface {
 	};
 
 	dispose() {
+		this.sourceFile = null;
 		this.disposed = true;
 		this.loadVersion++;
 		this.version++;
@@ -394,6 +502,14 @@ export function FloatingReader() {
 	const passwordDialog = useRef<HTMLDialogElement>(null);
 	const studyRequest = useRef(0);
 	const narration = useRef<ReaderNarration | null>(null);
+	const speechBridge = useRef<ReaderSpeechBridge | null>(null);
+	const pendingVoice = useRef<{ voice: string; rate: number } | null>(null);
+	const highlighting = useRef(true);
+	const [highlight, setHighlight] = useState(true);
+	const [neural, setNeural] = useState<NeuralStatus | null>(null);
+	const [speechRevision, setSpeechRevision] = useState(0);
+	const [previewing, setPreviewing] = useState(false);
+	const [documentVersion, setDocumentVersion] = useState(0);
 	const [speech, setSpeech] = useState(EMPTY_NARRATION);
 	const [fileName, setFileName] = useState("");
 	const [pageCount, setPageCount] = useState(0);
@@ -429,7 +545,7 @@ export function FloatingReader() {
 			documentChanging: () => narration.current?.stop(),
 			loading: setPdfOpening,
 			status: report,
-			loaded: (name, count) => { setFileName(name); setPageCount(count); },
+			loaded: (name, count) => { setFileName(name); setPageCount(count); setDocumentVersion(value => value + 1); },
 			page: (number) => { setPage(number); narration.current?.setPage(number); },
 			scale: (next, isFit) => { setScale(next); setFit(isFit); },
 			selection: (passage, x, y) => { setMenu({ passage, x, y }); },
@@ -444,12 +560,31 @@ export function FloatingReader() {
 		const bridge = window.lh?.overlay;
 		setNative(Boolean(bridge));
 		void bridge?.state().then((state) => { setOpacity(Math.round(state.opacity * 100)); setPinned(state.pinned); setShortcut(state.shortcutAvailable); }).catch((error: unknown) => report(messageOf(error), true));
-		if (window.lh?.platform !== "win32" || !bridge?.speech) return;
-		const controller = new ReaderNarration(bridge.speech, async number => surface.current?.speechText(number) ?? null, setSpeech);
+		const driver = createNeuralSpeechBridge(bridge?.speech);
+		speechBridge.current = driver;
+		const controller = new ReaderNarration(driver, async number => surface.current?.speechText(number) ?? null, setSpeech, () => crypto.randomUUID(), value => surface.current?.markSpeech(highlighting.current ? value : null));
 		narration.current = controller;
-		void controller.initialize();
-		return () => { if (narration.current === controller) narration.current = null; controller.dispose(); };
-	}, [report]);
+		void controller.initialize().then(() => { if (narration.current === controller && pendingVoice.current) { controller.setVoice(pendingVoice.current.voice); controller.setRate(pendingVoice.current.rate); pendingVoice.current = null; } });
+		void neuralSpeechStatus().then(setNeural).catch(() => {});
+		const off = driver.onState(value => { if (value.requestId?.startsWith("preview_") && ["idle", "error"].includes(value.status)) setPreviewing(false); });
+		return () => { off(); if (narration.current === controller) narration.current = null; controller.dispose(); };
+	}, [report, speechRevision]);
+
+	useEffect(() => {
+		if (!neural?.installing) return;
+		const timer = setInterval(() => { void neuralSpeechStatus().then(value => { setNeural(value); if (value.ready) setSpeechRevision(previous => previous + 1); }).catch(() => {}); }, 1500);
+		return () => clearInterval(timer);
+	}, [neural?.installing]);
+
+	const restoreReading = useCallback(async (file: PdfFile, session: ReaderSession) => {
+		narration.current?.stop();
+		await surface.current?.load(file);
+		if (surface.current?.getFile() !== file) throw new Error("The saved PDF could not be opened.");
+		await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+		await surface.current.restorePosition(session);
+		narration.current?.setVoice(session.voice); narration.current?.setRate(session.rate);
+		pendingVoice.current = { voice: session.voice, rate: session.rate };
+	}, []);
 
 	useEffect(() => {
 		const dialog = passwordDialog.current;
@@ -476,7 +611,7 @@ export function FloatingReader() {
 			if (event.key === "Escape" && !password) { setMenu(null); closeBubble(); }
 			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o") { event.preventDefault(); void openPdf(); }
 			if ((event.ctrlKey || event.metaKey) && event.key === ",") { event.preventDefault(); openSettings("agent"); }
-			if ((event.target as Element).closest?.("input, textarea, [contenteditable='true']") || password) return;
+			if ((event.target as Element).closest?.("input, textarea, select, [contenteditable='true'], [role='dialog']") || password) return;
 			if (event.key === "PageDown") { event.preventDefault(); surface.current?.navigate(page + 1); }
 			if (event.key === "PageUp") { event.preventDefault(); surface.current?.navigate(page - 1); }
 		};
@@ -560,8 +695,21 @@ export function FloatingReader() {
 				<button type="button" className={styles.iconButton} disabled={!pageCount || !["loading", "speaking", "paused"].includes(speech.status)} aria-label="Stop reading aloud" title="Stop reading aloud" onClick={() => narration.current?.stop()} data-testid="reader-speech-stop"><SquareIcon /></button>
 				<label className={styles.voiceControl}><span>Voice</span><select aria-label="Read aloud voice" data-testid="reader-speech-voice" value={speech.voice} disabled={!speech.available} onChange={event => narration.current?.setVoice(event.target.value)}>{!speech.voices.length && <option value="">Windows voices</option>}{speech.voices.map(voice => <option key={voice.name} value={voice.name}>{voice.name} · {voice.language}</option>)}</select></label>
 				<label className={styles.rateControl}><span>Speed</span><select aria-label="Read aloud speed" data-testid="reader-speech-rate" value={speech.rate} disabled={!speech.available} onChange={event => narration.current?.setRate(Number(event.target.value))}><option value={-2}>Slower</option><option value={0}>Normal</option><option value={2}>Faster</option><option value={4}>Very fast</option></select></label>
-				<div className={styles.speechStatus} role="status" data-testid="reader-speech-status" data-state={speech.status} title={speech.message}>{speech.message}</div>
+				<button type="button" className={styles.voicePreview} disabled={!speech.available} data-testid="reader-voice-preview" onClick={() => {
+					if (previewing) { void speechBridge.current?.stop(); setPreviewing(false); return; }
+					narration.current?.stop(); setPreviewing(true);
+					void speechBridge.current?.speak({ text: speech.voice.startsWith("Svenska") ? "Hej! Förklara det du har läst med egna ord. Vi tar en sida i taget." : "Hello. Explain what you have read in your own words. We will take it one page at a time.", voice: speech.voice, rate: speech.rate, requestId: `preview_${crypto.randomUUID()}` }).catch(error => { setPreviewing(false); report(messageOf(error), true); });
+				}}>{previewing ? "Stop preview" : "Preview"}</button>
+				<label className={styles.highlightToggle} title="Highlights the sentence actually playing"><input type="checkbox" checked={highlight} onChange={event => { highlighting.current = event.target.checked; setHighlight(event.target.checked); if (!event.target.checked) surface.current?.markSpeech(null); }} />Highlight</label>
+				{neural && !neural.ready && <button type="button" className={styles.voicePreview} disabled={neural.installing} onClick={() => { void setupNeuralSpeech().then(() => neuralSpeechStatus()).then(setNeural).catch(error => report(messageOf(error), true)); }}>{neural.installing ? "Installing voices…" : "Install neural voices"}</button>}
+				<div className={styles.speechStatus} role="status" data-testid="reader-speech-status" data-state={speech.status} title={speech.message}>{speech.message}{neural?.installing ? ` · ${neural.message}` : ""}</div>
 			</div>
+			<ReaderWorkspace documentName={fileName} documentVersion={documentVersion} page={page} pageCount={pageCount} loading={pdfOpening}
+				getFile={() => surface.current?.getFile() ?? null}
+				getState={() => ({ ...(surface.current?.position() ?? { pageCount: 1, page: 1, scrollFraction: 0, scale: 1, fit: true }), voice: speech.voice, rate: speech.rate })}
+				getChapters={() => surface.current?.chapters() ?? Promise.resolve([])}
+				extract={(start, end) => surface.current?.extract(start, end) ?? Promise.reject(new Error("Open a PDF first."))}
+				restore={restoreReading} pause={() => narration.current?.pause()} />
 			<div ref={viewport} className={`${styles.viewport} ${dragOver ? styles.dragOver : ""}`} data-testid="reader-viewport" onScroll={() => setMenu(null)} onDragOver={(event) => { event.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={(event) => { event.preventDefault(); setDragOver(false); const file = event.dataTransfer.files[0]; if (file) void loadFile(file); }}>
 				{!fileName && <div className={styles.empty}>
 					<div className={styles.eyebrow}><span />MORE ROOM TO THINK</div>

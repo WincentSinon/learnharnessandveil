@@ -33,6 +33,7 @@ try {
 	assert.ok("settings" in settings, "The owned reader reaches the protected API");
 	const outsider = await fetch(new URL("/api/settings", reader.url()));
 	assert.equal(outsider.status, 403, "An unpaired external process cannot use the private desktop API");
+	for (const endpoint of ["/api/reader/sessions", "/api/reader/speech", "/api/reader/check"]) assert.equal((await fetch(new URL(endpoint, reader.url()))).status, 403, `Private reader endpoint ${endpoint}`);
 	await reader.screenshot({ path: path.join(results, "reader-packaged.png") });
 	if (process.env.LH_TEST_PDF) {
 		await reader.getByTestId("reader-file-input").setInputFiles(process.env.LH_TEST_PDF);

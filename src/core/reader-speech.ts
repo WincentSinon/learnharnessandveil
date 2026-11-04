@@ -26,4 +26,12 @@ export interface ReaderSpeechBridge {
 	stop: () => Promise<ReaderSpeechState>;
 	state: () => Promise<ReaderSpeechState>;
 	onState: (callback: (state: ReaderSpeechState) => void) => () => void;
+	onProgress?: (callback: (progress: ReaderSpeechProgress) => void) => () => void;
+}
+
+export interface ReaderSpeechProgress {
+	requestId: string;
+	start: number;
+	end: number;
+	unit: "sentence" | "word";
 }

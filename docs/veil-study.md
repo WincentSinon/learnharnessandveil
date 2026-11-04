@@ -16,11 +16,25 @@ Veil Study is a personal productivity fork of [LearnHarness](https://github.com/
 
 ## Read aloud on Windows
 
+The current preview adds **English · LJ (neural)** and **Svenska · Alma (neural)** as local neural voices, alongside the original Windows voice. Choose **Preview** to hear a short sample. On a fresh installation, **Install neural voices** downloads the pinned runtime and models once (about 200 MB); later reading works offline. See [voice sources and licensing](local-voices.md).
+
 Open a PDF, choose an installed **Voice** and **Speed**, then click **Read aloud**. Speech starts at the beginning of the page shown in the page counter. While it is reading, scrolling or navigating to another page cancels the old page and reads the new one. Reading stops at the end of that page; click **Read aloud** again to start another page.
 
 **Pause** keeps speech silent even if you change pages. **Resume** continues from the paused position on the same page, or starts at the beginning of the new page if you navigated while paused. **Stop** cancels speech and turns page following off until you start it again. Changing voice or speed while reading restarts the current page with the new setting. Hiding the reader keeps audio playing so you can work in another application. Opening another PDF, reloading, or quitting stops speech.
 
-Read aloud uses Windows' installed local speech voices. It needs no model, API key, or internet connection and does not upload PDF text. Available voices and languages depend on the Windows installation. The PDF must contain extractable text; image-only scans need OCR first. PDF text order, columns, formulas, and code may affect the spoken result.
+Read aloud uses the downloaded local neural voices or a Windows desktop voice. It needs no AI provider or API key, and works offline after setup without uploading PDF text. Available desktop voices depend on the Windows installation. The PDF must contain extractable text; image-only scans need OCR first. PDF text order, columns, formulas, and code may affect the spoken result.
+
+Neural speech normalizes wrapped text and joins dictionary-recognized words split across lines, such as `desk-` / `top`. Genuine compounds, acronyms, URLs, and suspended compounds retain their hyphens. Ambiguous typography can still require checking. **Highlight** marks the sentence actually playing; exact word-level timing is not provided by these voices.
+
+## Save and resume reading
+
+Choose **Save session** after opening a PDF. The app keeps a local, content-addressed PDF copy and automatically saves page/scroll position, zoom, voice, speed, chapter selection, drafts, and understanding feedback. **My reading** lists saved sessions. Resuming restores the PDF and preferences silently; click **Read aloud** yourself when ready. Moving the original PDF does not break the saved copy. PDF passwords are not saved.
+
+## Check understanding
+
+Choose **Check understanding**, select the chapter from PDF bookmarks or enter its page range, and explain the current page in your own words. Choose English or Swedish feedback, then select **Check my understanding**. A check saves the reading session first. It sends the selected chapter's text, current page, and your rephrase to the configured strong model. Context is limited to 30 pages and 120,000 characters, with a smaller limit when the selected model needs one.
+
+Feedback separates accurate ideas, missing ideas, and corrections, cites supplied PDF pages, and asks one follow-up application question. Revise your explanation to try again. Attempts and model usage are saved with the reading session. An answer is evidence about understanding; the app does not claim complete mastery or write a mastery grade to the learning graph. You can keep reading while a check runs. If the app restarts during a check, the saved rephrase remains available and the interrupted check can be submitted again.
 
 ## Model setup
 
@@ -35,7 +49,7 @@ The floating reader sends the selected text, filename, page, and your question i
 - The desktop fork uses a separate **Veil Study** application profile, independent from upstream LearnHarness and the original Veil PDF Overlay prototype.
 - LearnHarness owns canonical sessions, model configuration, and learning data. The reader keeps a small local index of session IDs, source filenames/pages, and short passage previews; it stores no API keys or PDF bytes in that index.
 - PDFs remain local and are limited to 100 MB. Text selection needs a text layer; scanned pages need OCR in another tool. Password-protected PDFs prompt for their password.
-- Closing/hiding the reader retains the open document for the current app run. Restarting the app requires reopening the PDF; the session index remains available. Source links currently match by filename and page, not a full document fingerprint.
+- Closing/hiding the reader retains the open document for the current app run. After restarting, use **My reading** to restore a saved PDF; unsaved documents must be reopened. Saved reading sessions use PDF SHA-256 identity. Older passage-to-study links still match by filename and page.
 - The preview does not install upstream updates over the fork. Automatic updating stays disabled until a deliberate fork-specific release feed is configured.
 - The project and upstream code retain the **AGPL-3.0-only** license. Original author attribution is retained.
 

@@ -25,11 +25,11 @@ function setup(text: (page: number) => Promise<string | null> = async page => `T
 	return { reader, speaks, calls, snapshot: () => snapshot, emit: (value: ReaderSpeechState) => listener?.(value) };
 }
 
-test("page speech preserves words, Unicode and line breaks without reading PDF marked-content metadata", () => {
+test("page speech preserves words and Unicode while joining wrapped lines and skipping PDF metadata", () => {
 	assert.equal(pageSpeechText([
 		{ type: "beginMarkedContent", id: "Ignore this" }, { str: "UNIX" }, { str: " services", hasEOL: true },
 		{ str: "Svenska\u00ad ord\u0000" }, { str: "på svenska.", hasEOL: true }, { str: "" },
-	]), "UNIX services\nSvenska ord på svenska.");
+	]), "UNIX services Svenska ord på svenska.");
 	assert.equal(pageSpeechText([{ type: "beginMarkedContent" }]), "");
 });
 

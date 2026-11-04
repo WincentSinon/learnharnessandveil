@@ -14,4 +14,9 @@ const viewerCss = await readFile(path.join(pdfRoot, "web/pdf_viewer.css"), "utf8
 await writeFile(path.join(target, "text-layer.css"),
 	"/* Mozilla PDF.js — Apache-2.0; see LICENSE.txt */\n" + viewerCss.slice(viewerCss.indexOf(".textLayer {"), viewerCss.indexOf(".textLayerImages {")));
 await cp(path.join(pdfRoot, "LICENSE"), path.join(target, "LICENSE.txt"));
+for (const language of ["en", "sv"]) {
+	const dictionaryRoot = path.dirname(require.resolve(`dictionary-${language}`));
+	for (const extension of ["aff", "dic"]) await cp(path.join(dictionaryRoot, `index.${extension}`), path.join(target, `${language}.${extension}`));
+	await cp(path.join(dictionaryRoot, "license"), path.join(target, `${language}-dictionary-LICENSE.txt`));
+}
 console.log("Prepared local floating-reader PDF assets.");

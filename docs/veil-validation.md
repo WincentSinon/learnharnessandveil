@@ -2,6 +2,17 @@
 
 This is a Windows development preview based on upstream LearnHarness commit `e69e85269c064c6c9c49a8b06ae78c06e79c4a63`. The fork's first version is `0.4.1-veil.1`.
 
+## Reading workspace update — 0.4.1-veil.3
+
+- Added local neural English LJ and Swedish Alma voices, a voice preview, bounded sentence generation, cancellation, and sentence highlights driven by actual audio playback. The voice runtime/models are publisher downloads in the app's local data cache, with pinned SHA-256/size checks. No Python, GPU, speech API key, or inference network request is required.
+- Wrapped-word normalization now uses English/Swedish dictionaries, preserves true compounds/acronyms/URLs/suspended compounds, and maps normalized UTF-16 speech ranges back to PDF text runs. Ambiguous hard hyphens still require conservative treatment; exact word timestamps are not available from these neural voices.
+- Saved reading sessions retain a SHA-256-addressed local PDF copy, page/fractional position, zoom, voice, speed, chapter selection, per-page drafts, and feedback. Restore stays silent. Session-store tests cover restart, filename collisions, immutable PDF identity, corrupt/future records, and feedback/progress concurrency.
+- The structured understanding checker uses the existing configured strong model and provider admission, limits quoted chapter context to 30 pages/120,000 characters, includes the current raw page, validates page citations, persists attempts and usage, and returns one follow-up question. It never writes mastery grades to the knowledge graph. A faux native model verifies the real background/persistence path without a network call.
+- **123 focused checks pass** across the new workspace and the earlier native reader, transport, private API, preload and release checks. Typecheck and ESLint pass with the one existing upstream warning.
+- Real English and Swedish Piper synthesis produces valid WAV data. Cancellation terminates inference and removes temporary audio. Reader UI tests use real local synthesis and muted media playback to exercise both voices, sentence markers, paused page switching, Stop, saved PDF/progress/preferences/drafts after reload, silent resume, missing-provider guidance, and structured feedback rendering. UI AI feedback is mocked; a live paid model request was not made.
+- The packaged application passes the same workspace regression, including a full app/server restart with its temporary profile retained. New reading/session/speech/check endpoints preserve the desktop API boundary: unauthenticated external requests receive 403. A background-throttling setting is disabled only in the test app to make screenshots reliable while other apps are foregrounded.
+- Existing 109-page PDF rendering/import/scroll/selection/study-session regressions continue to pass. The broader upstream full-suite results below are from the earlier preview, not a new claim of a green Windows full suite.
+
 ## Read aloud update — 0.4.1-veil.2
 
 - Added current-page Read aloud, Pause/Resume, Stop, installed voice selection, and speed controls. Active reading follows manually changed pages and stops at the page end. Paused navigation stays silent; Resume starts the newly selected page. Hiding keeps audio running; PDF replacement, reload, and quit cancel it.

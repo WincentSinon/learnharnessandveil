@@ -28,6 +28,7 @@ try {
 	reader = await app.firstWindow({ timeout: 60000 });
 	reader.setDefaultTimeout(30000);
 	reader.on("pageerror", error => errors.push(error.message));
+	await reader.route("**/api/reader/speech", route => route.fulfill({ json: { ready: false, installing: false, message: "Native speech regression fixture", voices: [], downloadBytes: 0 } }));
 	await reader.waitForURL(/\/reader\/?$/);
 	await app.evaluate(({ ipcMain }) => {
 		globalThis.__speechTest = { calls: [], state: { status: "idle", requestId: null }, sender: null };

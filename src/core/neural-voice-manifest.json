@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "runtime": {
+    "url": "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip",
+    "file": "piper-windows.zip",
+    "size": 22477236,
+    "sha256": "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea"
+  },
+  "revision": "e7229f7d33a10e145e109b886d661984201ac3c4",
+  "voices": [
+    {
+      "id": "en-lj",
+      "name": "English · LJ (neural)",
+      "language": "en-US",
+      "folder": "en/en_US/ljspeech/high",
+      "file": "en_US-ljspeech-high.onnx",
+      "size": 114199011,
+      "sha256": "5d4f08ba6a2a48c44592eed3ce56bf85e9de3dd4e20df90541ae68a8310c029a",
+      "license": "LJ Speech public-domain recordings; model card retained",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/en/en_US/ljspeech/high/en_US-ljspeech-high.onnx",
+      "config": {
+        "file": "en_US-ljspeech-high.onnx.json",
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/en/en_US/ljspeech/high/en_US-ljspeech-high.onnx.json",
+        "sha256": "7e1f4634af596d83cca997fb7a931ba80b70f8a316a2655ee69c55365e0ace14",
+        "size": 4970
+      }
+    },
+    {
+      "id": "sv-alma",
+      "name": "Svenska · Alma (neural)",
+      "language": "sv-SE",
+      "folder": "sv/sv_SE/alma/medium",
+      "file": "sv_SE-alma-medium.onnx",
+      "size": 63434611,
+      "sha256": "f75455eb6afeb1db9e2905d5bd7e4115afcd3710e0d399b6a40981766d32fedc",
+      "license": "CC BY 4.0; yeagersthlm / NST Swedish TTS Dataset",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/sv/sv_SE/alma/medium/sv_SE-alma-medium.onnx",
+      "config": {
+        "file": "sv_SE-alma-medium.onnx.json",
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4/sv/sv_SE/alma/medium/sv_SE-alma-medium.onnx.json",
+        "sha256": "6924380892f769afa92fc6b28ff91d558690d7fb4e3ef8cbf821cefadc8f38fe",
+        "size": 6059
+      }
+    }
+  ]
+}
