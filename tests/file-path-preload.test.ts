@@ -78,7 +78,8 @@ describe("path-only preload bridge", () => {
 			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom",
 			"installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "overlay", "platform", "subscriptions",
 		]);
-		assert.deepEqual(Object.keys(f.bridge.overlay as object).sort(), ["hide", "open", "openPdf", "openSession", "setOpacity", "setPinned", "state"]);
+		assert.deepEqual(Object.keys(f.bridge.overlay as object).sort(), ["hide", "open", "openPdf", "openSession", "setOpacity", "setPinned", "speech", "state"]);
+		assert.deepEqual(Object.keys((f.bridge.overlay as { speech: object }).speech).sort(), ["onState", "pause", "resume", "speak", "state", "stop", "voices"]);
 		assert.equal(f.bridge.platform, "darwin");
 		for (const name of ["webUtils", "ipcRenderer", "electron", "fs", "require", "readFile", "writeFile", "uploadFile", "openPath"]) {
 			assert.equal(Object.hasOwn(f.bridge, name), false, name);

@@ -1,6 +1,6 @@
 {
 	"name": "veil-study",
-	"version": "0.4.1-veil.1",
+	"version": "0.4.1-veil.2",
 	"license": "AGPL-3.0-only",
 	"author": {
 		"name": "Amos Blomqvist",
@@ -26,7 +26,8 @@
 		"prebuild": "node scripts/prepare-reader-assets.mjs",
 		"test:reader": "tsx --test tests/reader-*.test.ts tests/overlay-native.test.ts",
 		"desktop:windows": "npm run build && node scripts/build-server.mjs && electron-builder --win --dir --x64 --publish never",
-		"test:reader:ui": "node scripts/test-reader-ui.mjs"
+		"test:reader:ui": "node scripts/test-reader-ui.mjs",
+		"test:reader:speech": "tsx scripts/test-reader-speech.mjs"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "1.4.0",

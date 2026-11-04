@@ -14,6 +14,14 @@ Veil Study is a personal productivity fork of [LearnHarness](https://github.com/
 
 **Ctrl+Alt+Space** hides/reveals the reader if the shortcut is available. **Ctrl+Shift+P** opens it from the application menu. Hiding or closing the reader window keeps its document and background work alive; use the application's **Quit** action to stop the app. Opacity and pinning are remembered.
 
+## Read aloud on Windows
+
+Open a PDF, choose an installed **Voice** and **Speed**, then click **Read aloud**. Speech starts at the beginning of the page shown in the page counter. While it is reading, scrolling or navigating to another page cancels the old page and reads the new one. Reading stops at the end of that page; click **Read aloud** again to start another page.
+
+**Pause** keeps speech silent even if you change pages. **Resume** continues from the paused position on the same page, or starts at the beginning of the new page if you navigated while paused. **Stop** cancels speech and turns page following off until you start it again. Changing voice or speed while reading restarts the current page with the new setting. Hiding the reader keeps audio playing so you can work in another application. Opening another PDF, reloading, or quitting stops speech.
+
+Read aloud uses Windows' installed local speech voices. It needs no model, API key, or internet connection and does not upload PDF text. Available voices and languages depend on the Windows installation. The PDF must contain extractable text; image-only scans need OCR first. PDF text order, columns, formulas, and code may affect the spoken result.
+
 ## Model setup
 
 Open the reader's gear icon. Configure a provider or supported subscription connection in **Providers**, then select the **strong**, **cheap**, and **vision** model slots in **Agent**. There are no preset model choices or embedded credentials.
@@ -48,6 +56,7 @@ The `predev` and `prebuild` scripts prepare local PDF.js worker, font, CMap, and
 npm run typecheck
 npm run lint
 npm run test:reader
+npm run test:reader:speech
 npm test
 npm run desktop:windows
 ```
@@ -68,6 +77,8 @@ Some upstream tests assume POSIX file modes, Unix fake executables/signals, or s
 - `components/reader-study-client.ts`: one-shot background admission and local source index.
 - `components/reader-sessions.tsx`: quiet, event-driven session status and explicit navigation.
 - `electron/overlay.cjs`: narrowly scoped native reader controls and shortcut lifecycle.
+- `electron/speech.cjs`: local Windows speech worker and bounded reader-only speech transport.
+- `src/core/reader-speech.ts`: speech bridge contracts.
 - `src/core/reader-study.ts`: source validation, quoted passage prompt, and status/index contracts.
 
 The existing private desktop API boundary is preserved. Reader windows are owned, trusted main frames on the app's private loopback origin; the per-launch API capability is never exposed to a separate companion app.

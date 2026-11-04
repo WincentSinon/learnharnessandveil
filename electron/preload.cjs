@@ -42,6 +42,19 @@ contextBridge.exposeInMainWorld("lh", {
 	platform: process.platform,
 	// The floating reader is another owned app window, not a public API bridge.
 	overlay: {
+		speech: {
+			voices: () => ipcRenderer.invoke("lh:overlay:speech", { op: "voices" }),
+			speak: (input) => ipcRenderer.invoke("lh:overlay:speech", { ...input, op: "speak" }),
+			pause: () => ipcRenderer.invoke("lh:overlay:speech", { op: "pause" }),
+			resume: () => ipcRenderer.invoke("lh:overlay:speech", { op: "resume" }),
+			stop: () => ipcRenderer.invoke("lh:overlay:speech", { op: "stop" }),
+			state: () => ipcRenderer.invoke("lh:overlay:speech", { op: "state" }),
+			onState: (cb) => {
+				const listener = (_event, value) => cb(value);
+				ipcRenderer.on("lh:overlay:speech-state", listener);
+				return () => ipcRenderer.removeListener("lh:overlay:speech-state", listener);
+			},
+		},
 		open: () => ipcRenderer.invoke("lh:overlay:open"),
 		state: () => ipcRenderer.invoke("lh:overlay:state"),
 		setOpacity: (value) => ipcRenderer.invoke("lh:overlay:opacity", value),

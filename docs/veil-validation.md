@@ -2,6 +2,16 @@
 
 This is a Windows development preview based on upstream LearnHarness commit `e69e85269c064c6c9c49a8b06ae78c06e79c4a63`. The fork's first version is `0.4.1-veil.1`.
 
+## Read aloud update — 0.4.1-veil.2
+
+- Added current-page Read aloud, Pause/Resume, Stop, installed voice selection, and speed controls. Active reading follows manually changed pages and stops at the page end. Paused navigation stays silent; Resume starts the newly selected page. Hiding keeps audio running; PDF replacement, reload, and quit cancel it.
+- 116 focused checks pass across narration, native speech validation and races, reader transport, trusted IPC, preload boundaries, and release checks. Typecheck and the production build pass. ESLint reports no errors and the same existing warning recorded below.
+- `node scripts/smoke-reader-speech.mjs` exercises the real Windows engine to a temporary WAV: natural completion, pause/resume, silent cancellation while paused, new page after cancellation, and rapid page replacement. It checks a finalized RIFF/WAVE header. No speaker audio or external service is used.
+- The real Electron narration UI regression passes in development and in the packaged application with synthetic text/image pages and the local 109-page test PDF. It verifies current-page extraction, navigation/scroll following, pause across pages, voice/rate changes, Stop, stale completion, page-end disarming, OCR guidance, and PDF replacement. Speech transport is mocked in this UI regression; native audio synthesis is tested separately above.
+- The packaged application starts directly into one reader, renders the local PDF, enumerates the actual Windows voices through the packaged worker, and preserves private API access (external requests receive 403). The standalone-server/provider/compression smoke gates pass offline.
+- This host's standard Windows PowerShell/.NET Framework speech runtime exposes **Microsoft Zira Desktop (en-US)**. Additional voices in a separate modern .NET runtime are not necessarily available to this portable worker. No Windows registry or speech settings are changed.
+- The full upstream suite was not repeated for this feature; the full-suite counts below describe the earlier preview and its Windows baseline comparison.
+
 ## Passing checks
 
 - TypeScript: `npm run typecheck`.

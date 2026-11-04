@@ -98,7 +98,7 @@ describe("desktop window chrome", () => {
 		assert.deepEqual(Object.keys(bridge).sort(), [
 			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "overlay", "platform", "subscriptions",
 		]);
-		assert.deepEqual(Object.keys(bridge.overlay as object).sort(), ["hide", "open", "openPdf", "openSession", "setOpacity", "setPinned", "state"]);
+		assert.deepEqual(Object.keys(bridge.overlay as object).sort(), ["hide", "open", "openPdf", "openSession", "setOpacity", "setPinned", "speech", "state"]);
 		assert.deepEqual(Object.keys(bridge.subscriptions as object).sort(), ["cancel", "consent", "disconnect", "login", "onChange", "open", "respond", "retry", "status"]);
 	});
 });

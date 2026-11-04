@@ -1,3 +1,5 @@
+import type { ReaderSpeechBridge } from "./reader-speech.ts";
+
 /** Passage context shared by the floating reader and background study transport. */
 export interface PassageStudyInput {
 	documentName: string;
@@ -8,6 +10,7 @@ export interface PassageStudyInput {
 }
 
 export interface ReaderOverlayBridge {
+	speech?: ReaderSpeechBridge;
 	open: () => Promise<void>;
 	state: () => Promise<{ opacity: number; pinned: boolean; shortcutAvailable: boolean }>;
 	setOpacity: (value: number) => Promise<number>;

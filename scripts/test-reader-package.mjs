@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
@@ -23,8 +23,12 @@ try {
 	await reader.waitForFunction(() => { const input = document.querySelector('[data-testid="reader-opacity"]'); return Boolean(input && !input.disabled); });
 	const metadata = await app.evaluate(({ app, BrowserWindow }) => ({ packaged: app.isPackaged, version: app.getVersion(), windows: BrowserWindow.getAllWindows().length }));
 	assert.equal(metadata.packaged, true);
-	assert.equal(metadata.version, "0.4.1-veil.1");
+	const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+	assert.equal(metadata.version, packageJson.version);
 	assert.equal(metadata.windows, 1, "The reader is the initial window; no workspace steals focus");
+	const voices = await reader.evaluate(() => window.lh.overlay.speech.voices());
+	assert.ok(voices.length > 0, "Packaged reader reaches installed Windows speech voices");
+	assert.ok(voices.every(voice => voice.name && voice.language));
 	const settings = await reader.evaluate(async () => (await fetch("/api/settings")).json());
 	assert.ok("settings" in settings, "The owned reader reaches the protected API");
 	const outsider = await fetch(new URL("/api/settings", reader.url()));
@@ -40,7 +44,7 @@ try {
 	assert.ok(Math.abs(opacity - .71) < .015);
 	await reader.getByTestId("reader-opacity").fill("100");
 	await reader.getByTestId("reader-opacity").dispatchEvent("input");
-	console.log(`PASS: packaged ${metadata.version} launches directly into one reader, renders the local PDF, changes native opacity, and preserves private API access.`);
+	console.log(`PASS: packaged ${metadata.version} launches directly into one reader, renders the local PDF, enumerates ${voices.length} local speech voices, changes native opacity, and preserves private API access.`);
 } catch (error) {
 	console.error("Packaged app diagnostics:", diagnostics.slice(-5000));
 	throw error;

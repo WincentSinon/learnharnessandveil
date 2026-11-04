@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { createSpeechController } = require("./speech.cjs");
 
 const OVERLAY_SHORTCUT = "Control+Alt+Space";
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
@@ -31,7 +32,7 @@ async function readPdf(filePath, io = fs.promises) {
 /** Native capabilities for one owned reader window; no new HTTP endpoint or token. */
 function createOverlayController({
 	app, BrowserWindow, dialog, ipcMain, globalShortcut, origin, trustedWindows, trustedSender,
-	createReaderWindow, getMainWindow, createMainWindow, log = () => {},
+	createReaderWindow, getMainWindow, createMainWindow, log = () => {}, createSpeech = createSpeechController,
 }) {
 	const preferencesPath = path.join(app.getPath("userData"), "reader-window.json");
 	let preferences = { opacity: 1, pinned: true };
@@ -49,6 +50,14 @@ function createOverlayController({
 	const handlers = [];
 	const state = () => ({ ...preferences, shortcutAvailable });
 	const liveReader = () => reader && !reader.isDestroyed() ? reader : null;
+	const speech = createSpeech({ onState(value) {
+		const win = liveReader();
+		if (!win) return;
+		try {
+			const url = new URL(win.webContents.getURL());
+			if (url.origin === origin && ["/reader", "/reader/"].includes(url.pathname)) win.webContents.send("lh:overlay:speech-state", value);
+		} catch { /* A closing or navigating renderer has no state subscriber. */ }
+	} });
 
 	function persist() {
 		clearTimeout(saveTimer);
@@ -86,11 +95,16 @@ function createOverlayController({
 			reader = win;
 			win.setAlwaysOnTop(preferences.pinned);
 			win.setOpacity(preferences.opacity);
+			win.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+				if (mainFrame && !inPlace) speech.reset();
+			});
+			win.webContents.on("render-process-gone", () => speech.reset());
+			win.webContents.once("destroyed", () => speech.reset());
 			win.on("close", event => {
 				// Hiding retains the document and lets server-owned study turns finish.
 				if (!quitting) { event.preventDefault(); win.hide(); }
 			});
-			win.once("closed", () => { if (reader === win) reader = null; });
+			win.once("closed", () => { speech.reset(); if (reader === win) reader = null; });
 			// createWindow shows the new window only after its first rendered frame.
 			return;
 		}
@@ -113,6 +127,7 @@ function createOverlayController({
 	}
 	function beforeQuit() {
 		quitting = true;
+		speech.dispose();
 		persist();
 		if (shortcutAvailable) globalShortcut.unregister(OVERLAY_SHORTCUT);
 	}
@@ -140,6 +155,12 @@ function createOverlayController({
 		return result.canceled || !result.filePaths[0] ? null : readPdf(result.filePaths[0]);
 	});
 	handle("lh:overlay:session", false, openSession);
+	handle("lh:overlay:speech", true, command => {
+		if (!command || typeof command !== "object") throw new Error("Invalid speech control.");
+		if (command.op === "speak") return speech.speak(command);
+		if (["voices", "pause", "resume", "stop", "state"].includes(command.op)) return speech[command.op]();
+		throw new Error("Invalid speech control.");
+	});
 	try {
 		shortcutAvailable = !globalShortcut.isRegistered(OVERLAY_SHORTCUT) && globalShortcut.register(OVERLAY_SHORTCUT, () => {
 			void toggle().catch(error => log(`reader shortcut: ${error?.message ?? error}`));

@@ -44,7 +44,8 @@ test("the picker reader validates type, file size, and PDF bytes before returnin
 });
 
 class FakeWindow extends EventEmitter {
-	webContents: { mainFrame: { url: string }; getURL: () => string };
+	webContents: EventEmitter & { mainFrame: { url: string }; getURL: () => string; send: (channel: string, value: unknown) => void };
+	messages: Array<{ channel: string; value: unknown }> = [];
 	visible = false;
 	minimized = false;
 	destroyed = false;
@@ -53,7 +54,10 @@ class FakeWindow extends EventEmitter {
 	focusCount = 0;
 	constructor(url: string) {
 		super();
-		this.webContents = { mainFrame: { url }, getURL: () => this.webContents.mainFrame.url };
+		this.webContents = Object.assign(new EventEmitter(), {
+			mainFrame: { url }, getURL: () => this.webContents.mainFrame.url,
+			send: (channel: string, value: unknown) => { this.messages.push({ channel, value }); },
+		});
 	}
 	isDestroyed() { return this.destroyed; }
 	isMinimized() { return this.minimized; }
@@ -67,7 +71,7 @@ class FakeWindow extends EventEmitter {
 	async loadURL(url: string) { this.webContents.mainFrame.url = url; }
 }
 
-async function fixture(t: TestContext, registered = true) {
+async function fixture(t: TestContext, registered = true, createSpeech?: unknown) {
 	const directory = await mkdtemp(path.join(os.tmpdir(), "lh-overlay-test-"));
 	const app = Object.assign(new EventEmitter(), { getPath: () => directory });
 	const main = new FakeWindow(`${origin}/`);
@@ -77,6 +81,7 @@ async function fixture(t: TestContext, registered = true) {
 	let shortcut: (() => void) | undefined;
 	const unregistered: string[] = [];
 	const controller = createOverlayController({
+		...(createSpeech ? { createSpeech } : {}),
 		app,
 		BrowserWindow: { fromWebContents: (contents: unknown) => windows.find(win => win.webContents === contents) ?? null },
 		dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
@@ -170,4 +175,38 @@ test("hiding and the optional shortcut preserve the reader instead of creating d
 	assert(unregistered.includes(OVERLAY_SHORTCUT));
 	const unavailable = await fixture(t, false);
 	assert.equal(unavailable.controller.state().shortcutAvailable, false, "an occupied shortcut remains optional");
+});
+
+test("speech is reader-only, sends state only to the reader, and resets on native renderer lifecycle", async t => {
+	const calls: string[] = [];
+	let changed: (value: unknown) => void = () => {};
+	const idle = { status: "idle", requestId: null };
+	const speech = Object.fromEntries(["voices", "speak", "pause", "resume", "stop", "state", "reset", "dispose"].map(op => [op, () => { calls.push(op); return op === "voices" ? [] : idle; }]));
+	const { main, windows, invoke, handlers, event } = await fixture(t, true, ({ onState }: { onState: (value: unknown) => void }) => { changed = onState; return speech; });
+	await invoke("open", main);
+	const reader = windows[1]!;
+	for (const op of ["voices", "speak", "pause", "resume", "stop", "state"]) {
+		await assert.rejects(Promise.resolve().then(() => invoke("speech", main, { op })), /floating reader/);
+		await assert.rejects(Promise.resolve().then(() => handlers.get("lh:overlay:speech")!({ ...event(reader), senderFrame: { url: `${origin}/reader` } }, { op })), /Untrusted/);
+	}
+	assert.deepEqual(calls, [], "unauthorized frames cannot start or inspect native speech");
+	await invoke("speech", reader, { op: "voices" });
+	await invoke("speech", reader, { op: "pause" });
+	await assert.rejects(Promise.resolve().then(() => invoke("speech", reader, { op: "exec" })), /Invalid speech/);
+	changed({ status: "speaking", requestId: "example" });
+	assert.equal(reader.messages.at(-1)?.channel, "lh:overlay:speech-state");
+	assert.equal(main.messages.length, 0);
+	await invoke("hide", reader);
+	assert.deepEqual(calls, ["voices", "pause"], "hiding retains speech for multitasking");
+	reader.webContents.emit("did-start-navigation", {}, `${origin}/reader`, true, true);
+	reader.webContents.emit("did-start-navigation", {}, `${origin}/reader`, false, false);
+	assert.equal(calls.filter(op => op === "reset").length, 0, "subframe/in-place navigation leaves the page alone");
+	reader.webContents.emit("did-start-navigation", {}, `${origin}/reader`, false, true);
+	reader.webContents.emit("render-process-gone", {}, { reason: "crashed" });
+	reader.webContents.emit("destroyed");
+	assert.equal(calls.filter(op => op === "reset").length, 3);
+	reader.webContents.mainFrame.url = "https://untrusted.invalid/reader";
+	const messageCount = reader.messages.length;
+	changed({ status: "idle", requestId: "example" });
+	assert.equal(reader.messages.length, messageCount, "state is never published into an untrusted page");
 });

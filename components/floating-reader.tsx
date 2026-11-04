@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from "pdfjs-dist";
-import { ArrowDownToLineIcon, BookOpenIcon, ChevronLeftIcon, ChevronRightIcon, DumbbellIcon, FileTextIcon, LayersIcon, MaximizeIcon, MinusIcon, PinIcon, PlusIcon, SettingsIcon, SparklesIcon, XIcon } from "lucide-react";
+import { ArrowDownToLineIcon, BookOpenIcon, ChevronLeftIcon, ChevronRightIcon, DumbbellIcon, FileTextIcon, LayersIcon, MaximizeIcon, MinusIcon, PauseIcon, PinIcon, PlayIcon, PlusIcon, SettingsIcon, SparklesIcon, SquareIcon, Volume2Icon, XIcon } from "lucide-react";
 import { TopBar } from "@/components/top-bar";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { ReaderSessions, openReaderSession, startPassageSession } from "@/components/reader-sessions";
+import { EMPTY_NARRATION, ReaderNarration, pageSpeechText } from "@/components/reader-narration";
 import styles from "./floating-reader.module.css";
 
 type PdfModule = typeof import("pdfjs-dist");
@@ -30,6 +31,8 @@ type Page = {
 };
 type Passage = { text: string; page: Page; marks: Mark[]; documentName: string; version: number };
 type ReaderCallbacks = {
+	documentChanging: () => void;
+	loading: (busy: boolean) => void;
 	status: (message: string, error?: boolean) => void;
 	loaded: (name: string, count: number) => void;
 	page: (page: number) => void;
@@ -67,6 +70,7 @@ class PdfSurface {
 	private scale = 1;
 	private fit = true;
 	private documentName = "";
+	private opening = false;
 	private disposed = false;
 	private scrollFrame = 0;
 	private resizeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -96,27 +100,30 @@ class PdfSurface {
 
 	async load(file: PdfFile) {
 		const loadVersion = ++this.loadVersion;
-		await this.loadingTask?.destroy().catch(() => {});
-		if (this.disposed || loadVersion !== this.loadVersion) return;
-		this.callbacks.status(`Opening ${file.name}…`);
-		const library = await getPdfModule();
-		if (this.disposed || loadVersion !== this.loadVersion) return;
-		const task = library.getDocument({
-			data: new Uint8Array(file.data),
-			cMapUrl: "/pdf-assets/cmaps/",
-			standardFontDataUrl: "/pdf-assets/standard_fonts/",
-			wasmUrl: "/pdf-assets/wasm/",
-			iccUrl: "/pdf-assets/iccs/",
-		});
-		this.loadingTask = task;
-		task.onPassword = (update: (password: string) => void, reason: number) => {
-			if (this.disposed || loadVersion !== this.loadVersion) { void task.destroy(); return; }
-			this.callbacks.password(update, () => {
-				void task.destroy();
-				if (loadVersion === this.loadVersion) this.callbacks.status("Opening the protected PDF was cancelled.");
-			}, reason === library.PasswordResponses.INCORRECT_PASSWORD);
-		};
+		this.opening = true;
+		this.callbacks.loading(true);
+		this.callbacks.documentChanging();
 		try {
+			await this.loadingTask?.destroy().catch(() => {});
+			if (this.disposed || loadVersion !== this.loadVersion) return;
+			this.callbacks.status(`Opening ${file.name}…`);
+			const library = await getPdfModule();
+			if (this.disposed || loadVersion !== this.loadVersion) return;
+			const task = library.getDocument({
+				data: new Uint8Array(file.data),
+				cMapUrl: "/pdf-assets/cmaps/",
+				standardFontDataUrl: "/pdf-assets/standard_fonts/",
+				wasmUrl: "/pdf-assets/wasm/",
+				iccUrl: "/pdf-assets/iccs/",
+			});
+			this.loadingTask = task;
+			task.onPassword = (update: (password: string) => void, reason: number) => {
+				if (this.disposed || loadVersion !== this.loadVersion) { void task.destroy(); return; }
+				this.callbacks.password(update, () => {
+					void task.destroy();
+					if (loadVersion === this.loadVersion) this.callbacks.status("Opening the protected PDF was cancelled.");
+				}, reason === library.PasswordResponses.INCORRECT_PASSWORD);
+			};
 			const pdf = await task.promise;
 			const first = await pdf.getPage(1);
 			if (this.disposed || loadVersion !== this.loadVersion) { await task.destroy(); return; }
@@ -171,7 +178,11 @@ class PdfSurface {
 				this.callbacks.status(`Could not open PDF: ${messageOf(error)}`, true);
 			}
 		} finally {
-			if (loadVersion === this.loadVersion) this.loadingTask = null;
+			if (loadVersion === this.loadVersion) {
+				this.loadingTask = null;
+				this.opening = false;
+				this.callbacks.loading(false);
+			}
 		}
 	}
 
@@ -279,6 +290,20 @@ class PdfSurface {
 
 	fitWidth() { this.zoom(this.fitScale(), true); }
 
+	/** Extract independently of the canvas/text-layer render queue. */
+	async speechText(number: number): Promise<string | null> {
+		const pdf = this.pdf;
+		const version = this.loadVersion;
+		const record = this.pages[number - 1];
+		const current = () => !this.disposed && !this.opening && this.pdf === pdf && version === this.loadVersion;
+		if (!pdf || !record || !current()) return null;
+		const page = record.proxy ?? await pdf.getPage(number);
+		if (!current()) return null;
+		const content = await page.getTextContent();
+		if (!current()) return null;
+		return pageSpeechText(content.items);
+	}
+
 	navigate(number: number) {
 		if (!this.pdf) return;
 		const target = Math.max(1, Math.min(this.pdf.numPages, Math.round(number) || 1));
@@ -368,8 +393,11 @@ export function FloatingReader() {
 	const fileInput = useRef<HTMLInputElement>(null);
 	const passwordDialog = useRef<HTMLDialogElement>(null);
 	const studyRequest = useRef(0);
+	const narration = useRef<ReaderNarration | null>(null);
+	const [speech, setSpeech] = useState(EMPTY_NARRATION);
 	const [fileName, setFileName] = useState("");
 	const [pageCount, setPageCount] = useState(0);
+	const [pdfOpening, setPdfOpening] = useState(false);
 	const [page, setPage] = useState(1);
 	const [scale, setScale] = useState(1);
 	const [fit, setFit] = useState(true);
@@ -398,9 +426,11 @@ export function FloatingReader() {
 	useEffect(() => {
 		if (!viewport.current || !pages.current) return;
 		const controller = new PdfSurface(viewport.current, pages.current, {
+			documentChanging: () => narration.current?.stop(),
+			loading: setPdfOpening,
 			status: report,
 			loaded: (name, count) => { setFileName(name); setPageCount(count); },
-			page: setPage,
+			page: (number) => { setPage(number); narration.current?.setPage(number); },
 			scale: (next, isFit) => { setScale(next); setFit(isFit); },
 			selection: (passage, x, y) => { setMenu({ passage, x, y }); },
 			clearSelection,
@@ -414,6 +444,11 @@ export function FloatingReader() {
 		const bridge = window.lh?.overlay;
 		setNative(Boolean(bridge));
 		void bridge?.state().then((state) => { setOpacity(Math.round(state.opacity * 100)); setPinned(state.pinned); setShortcut(state.shortcutAvailable); }).catch((error: unknown) => report(messageOf(error), true));
+		if (window.lh?.platform !== "win32" || !bridge?.speech) return;
+		const controller = new ReaderNarration(bridge.speech, async number => surface.current?.speechText(number) ?? null, setSpeech);
+		narration.current = controller;
+		void controller.initialize();
+		return () => { if (narration.current === controller) narration.current = null; controller.dispose(); };
 	}, [report]);
 
 	useEffect(() => {
@@ -518,6 +553,14 @@ export function FloatingReader() {
 				<span className={styles.localLabel}><span />{fileName ? "Local PDF" : "Your reading room"}</span>
 				<div className={styles.zoomControls}><button type="button" aria-label="Zoom out" className={styles.iconButton} disabled={!pageCount} onClick={() => surface.current?.zoom(scale - 0.15)}><MinusIcon /></button><output>{Math.round(scale * 100)}%</output><button type="button" aria-label="Zoom in" className={styles.iconButton} disabled={!pageCount} onClick={() => surface.current?.zoom(scale + 0.15)}><PlusIcon /></button><button type="button" aria-label="Fit PDF to width" aria-pressed={fit} className={styles.iconButton} disabled={!pageCount} onClick={() => surface.current?.fitWidth()}><MaximizeIcon /></button></div>
 				<div className={styles.pageControls}><button type="button" aria-label="Previous PDF page" className={styles.iconButton} disabled={!pageCount} onClick={() => surface.current?.navigate(page - 1)}><ChevronLeftIcon /></button><input data-testid="reader-page" aria-label="PDF page number" type="number" min="1" max={pageCount || 1} value={page} disabled={!pageCount} onChange={(event) => surface.current?.navigate(Number(event.target.value))} /><span>/ {pageCount}</span><button type="button" aria-label="Next PDF page" className={styles.iconButton} disabled={!pageCount} onClick={() => surface.current?.navigate(page + 1)}><ChevronRightIcon /></button></div>
+			</div>
+			<div className={styles.speechToolbar} aria-label="Read aloud controls" data-testid="reader-speech-controls">
+				<button type="button" className={styles.speechStart} disabled={!pageCount || pdfOpening || !speech.available || speech.status === "loading" || speech.status === "speaking" || speech.status === "paused"} onClick={() => narration.current?.read()} data-testid="reader-speech-start"><Volume2Icon aria-hidden="true" />Read aloud</button>
+				<button type="button" className={styles.iconButton} disabled={!pageCount || !["loading", "speaking", "paused"].includes(speech.status)} aria-label={speech.status === "paused" ? "Resume reading aloud" : "Pause reading aloud"} title={speech.status === "paused" ? "Resume reading aloud" : "Pause reading aloud"} onClick={() => speech.status === "paused" ? narration.current?.resume() : narration.current?.pause()} data-testid="reader-speech-pause">{speech.status === "paused" ? <PlayIcon /> : <PauseIcon />}</button>
+				<button type="button" className={styles.iconButton} disabled={!pageCount || !["loading", "speaking", "paused"].includes(speech.status)} aria-label="Stop reading aloud" title="Stop reading aloud" onClick={() => narration.current?.stop()} data-testid="reader-speech-stop"><SquareIcon /></button>
+				<label className={styles.voiceControl}><span>Voice</span><select aria-label="Read aloud voice" data-testid="reader-speech-voice" value={speech.voice} disabled={!speech.available} onChange={event => narration.current?.setVoice(event.target.value)}>{!speech.voices.length && <option value="">Windows voices</option>}{speech.voices.map(voice => <option key={voice.name} value={voice.name}>{voice.name} · {voice.language}</option>)}</select></label>
+				<label className={styles.rateControl}><span>Speed</span><select aria-label="Read aloud speed" data-testid="reader-speech-rate" value={speech.rate} disabled={!speech.available} onChange={event => narration.current?.setRate(Number(event.target.value))}><option value={-2}>Slower</option><option value={0}>Normal</option><option value={2}>Faster</option><option value={4}>Very fast</option></select></label>
+				<div className={styles.speechStatus} role="status" data-testid="reader-speech-status" data-state={speech.status} title={speech.message}>{speech.message}</div>
 			</div>
 			<div ref={viewport} className={`${styles.viewport} ${dragOver ? styles.dragOver : ""}`} data-testid="reader-viewport" onScroll={() => setMenu(null)} onDragOver={(event) => { event.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={(event) => { event.preventDefault(); setDragOver(false); const file = event.dataTransfer.files[0]; if (file) void loadFile(file); }}>
 				{!fileName && <div className={styles.empty}>
