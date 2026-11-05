@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { BookMarkedIcon, CheckCheckIcon, SaveIcon, XIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import type { ReaderChapter, ReaderAttempt, ReaderSession, ReaderSessionState, ReaderSessionSummary } from "@/src/core";
@@ -9,7 +9,9 @@ import { CloudSyncIndicator } from "./cloud-sync-status";
 import { useServerEvent } from "./server-events";
 
 export interface ReadingDocument { name: string; data: Uint8Array }
+export interface ReaderWorkspaceHandle { getStudyDocument: () => Promise<ReaderSession> }
 export interface ReaderWorkspaceProps {
+	ref?: Ref<ReaderWorkspaceHandle>;
 	documentName: string; documentVersion: number; page: number; pageCount: number; loading: boolean;
 	getFile: () => ReadingDocument | null;
 	getState: () => Omit<ReaderSessionState, "chapter" | "drafts" | "language">;
@@ -46,7 +48,8 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 	const current = useRef({ props, session, drafts, chapter, language }); current.current = { props, session, drafts, chapter, language };
 	const epoch = useRef(0), restoringRef = useRef(false), saved = useRef("");
 	const patchChain = useRef(Promise.resolve());
-	const savingRef = useRef(false);
+	const savedFile = useRef<ReadingDocument | null>(null);
+	const creating = useRef<{ file: ReadingDocument; task: Promise<ReaderSession | null> } | null>(null);
 	const checkedRequest = useRef<string | null>(null);
 	const checkingAdmission = useRef(false);
 	const acknowledged = useRef<ReaderSessionState | null>(null);
@@ -64,7 +67,7 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 	useServerEvent("cloud-sync-changed", () => { void refreshLibrary().catch(() => {}); void refreshActive.current(); });
 	const persist = useCallback(() => {
 		const owner = current.current.session;
-		if (!owner || current.current.props.loading || restoringRef.current || cloudRefreshing.current) return;
+		if (!owner || savedFile.current !== current.current.props.getFile() || current.current.props.loading || restoringRef.current || cloudRefreshing.current) return;
 		const value = snapshot(), encoded = JSON.stringify(value);
 		if (saved.current === encoded) return;
 		saved.current = encoded;
@@ -144,7 +147,7 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 		epoch.current++; checkedRequest.current = null;
 		setSession(null); setDrafts({}); setAttempts([]); setChecking(false); setError(""); setMessage("");
 		setChapter({ start: props.page, end: Math.min(props.pageCount || 1, props.page + 4) });
-		saved.current = ""; acknowledged.current = null; fingerprint.current = undefined;
+		saved.current = ""; acknowledged.current = null; fingerprint.current = undefined; savedFile.current = null;
 		if (props.pageCount) {
 			const owner = epoch.current;
 			void props.getChapters().then(value => { if (owner === epoch.current) setChapters(value); }).catch(() => setChapters([]));
@@ -180,7 +183,9 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 		return () => { alive = false; clearInterval(timer); };
 	}, [session]);
 	async function save(): Promise<ReaderSession | null> {
-		if (current.current.session) {
+		const file = current.current.props.getFile();
+		if (!file || current.current.props.loading || restoringRef.current) return null;
+		if (current.current.session && savedFile.current === file) {
 			setSaving(true);
 			saved.current = "";
 			try {
@@ -193,22 +198,54 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 				setError("Your draft is still open. Wait for cloud changes to finish, then save again."); return null;
 			} finally { setSaving(false); }
 		}
-		if (savingRef.current) return null;
-		const file = props.getFile(); if (!file) return null;
-		const owner = epoch.current; savingRef.current = true; setSaving(true); setError("");
-		try {
-			const state = snapshot();
-			const form = new FormData(); form.set("file", new Blob([new Uint8Array(file.data)], { type: "application/pdf" }), file.name); form.set("state", JSON.stringify(state));
-			const value = await jsonRequest<SessionResponse>("/api/reader/sessions", { method: "POST", body: form });
-			if (owner !== epoch.current) return null;
-			setSession(value.session); current.current.session = value.session;
-			fingerprint.current = value.fingerprint; acknowledged.current = readingState(value.session);
-			saved.current = JSON.stringify(state); setMessage("Reading session saved · autosave is on");
-			window.dispatchEvent(new Event("veil:study-saved"));
-			void refreshLibrary(); return value.session;
-		} catch (failure) { if (owner === epoch.current) setError(failure instanceof Error ? failure.message : "Session could not be saved."); return null; }
-		finally { savingRef.current = false; setSaving(false); }
+		if (creating.current?.file === file) return creating.current.task;
+		const owner = epoch.current;
+		setSaving(true);
+		setError("");
+		const task = (async () => {
+			try {
+				const state = snapshot();
+				const form = new FormData();
+				form.set("file", new Blob([new Uint8Array(file.data)], { type: "application/pdf" }), file.name);
+				form.set("state", JSON.stringify(state));
+				const value = await jsonRequest<SessionResponse>("/api/reader/sessions", { method: "POST", body: form });
+				if (owner !== epoch.current || current.current.props.getFile() !== file) return null;
+				savedFile.current = file;
+				setSession(value.session);
+				current.current.session = value.session;
+				fingerprint.current = value.fingerprint;
+				acknowledged.current = readingState(value.session);
+				saved.current = JSON.stringify(state);
+				setMessage("Reading session saved · autosave is on");
+				window.dispatchEvent(new Event("veil:study-saved"));
+				void refreshLibrary().catch(() => {});
+				return value.session;
+			} catch (failure) {
+				if (owner === epoch.current) setError(failure instanceof Error ? failure.message : "Session could not be saved.");
+				return null;
+			}
+		})();
+		creating.current = { file, task };
+		try { return await task; }
+		finally {
+			if (creating.current?.task === task) {
+				creating.current = null;
+				setSaving(false);
+			}
+		}
 	}
+
+	useImperativeHandle(props.ref, () => ({
+		async getStudyDocument() {
+			const file = current.current.props.getFile();
+			if (!file || current.current.props.loading || restoringRef.current) throw new Error("Wait for the PDF to finish opening, then try again.");
+			const existing = savedFile.current === file ? current.current.session : null;
+			const document = existing ?? await save();
+			if (current.current.props.getFile() !== file) throw new Error("The open PDF changed. Select the passage again.");
+			if (!document) throw new Error("The PDF could not be saved in My reading. Try Save session, then start the study again.");
+			return document;
+		},
+	}));
 	async function resume(id: string) {
 		if (cloudTask.current) await cloudTask.current;
 		if (restoringRef.current) return;
@@ -218,8 +255,10 @@ export function ReaderWorkspace(props: ReaderWorkspaceProps) {
 			const value = await jsonRequest<SessionResponse>(`/api/reader/sessions/${id}`);
 			const response = await fetch(`/api/reader/sessions/${id}/pdf`); if (!response.ok) throw new Error("The saved PDF could not be opened.");
 			ignoreDocumentReset.current = true;
-			await props.restore({ name: value.session.documentName, data: new Uint8Array(await response.arrayBuffer()) }, value.session);
+			const file = { name: value.session.documentName, data: new Uint8Array(await response.arrayBuffer()) };
+			await props.restore(file, value.session);
 			if (owner !== epoch.current) return;
+			savedFile.current = file;
 			setSession(value.session); current.current = { ...current.current, session: value.session, drafts: value.session.drafts, chapter: value.session.chapter, language: value.session.language }; setDrafts(value.session.drafts); setChapter(value.session.chapter); setLanguage(value.session.language); setAttempts(value.session.attempts);
 			fingerprint.current = value.fingerprint; acknowledged.current = readingState(value.session);
 			saved.current = JSON.stringify(snapshot()); checkedRequest.current = null; setChecking(value.session.attempts.some(attempt => attempt.status === "pending")); setMessage(`Resumed page ${value.session.page} · speech is stopped`); setPanel(null);

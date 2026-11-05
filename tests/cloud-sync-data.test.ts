@@ -103,10 +103,21 @@ test("conflict copies are visible, preserve both versions and are deterministic 
 
 test("durable reader passage links migrate from browser data and restore without live status", t => {
 	const source = directory(t), target = directory(t), store = createReaderStudyStore(source);
-	assert.equal(store.merge([study])[0]?.state, "ready");
+	const documentId = "a1".repeat(32);
+	assert.equal(store.merge([{ ...study, documentId }])[0]?.state, "ready");
+	assert.equal(store.get(study.id)?.documentId, documentId);
+	store.merge([study]);
+	assert.equal(store.get(study.id)?.documentId, documentId, "legacy metadata must keep the bound PDF");
+	assert.throws(() => store.merge([{ ...study, documentId: "b2".repeat(32) }]), /different PDF attached/);
+	assert.equal(store.get("../../auth"), null);
+	assert.equal(store.get("chat_missing"), null);
 	const record = captureSyncRecords(source).find(value => value.kind === "reader-study")!;
-	assert.equal(record.payload.state, "ready"); applySyncRecord(target, record);
-	assert.deepEqual(createReaderStudyStore(target).list(), [{ ...study, state: "ready" }]);
+	assert.equal(record.payload.state, "ready"); assert.equal(record.payload.documentId, documentId); applySyncRecord(target, record);
+	assert.deepEqual(createReaderStudyStore(target).list(), [{ ...study, documentId, state: "ready" }]);
+	assert.equal(createReaderStudyStore(target).get(study.id)?.documentId, documentId);
 	assert.throws(() => store.merge([{ ...study, id: "../../auth" }]), /invalid/);
 	assert.equal(stableSyncJson(captureSyncRecords(target)), stableSyncJson([record]));
+	applySyncRecord(target, { ...record, payload: { ...study, title: "Renamed on an older build" } });
+	assert.equal(createReaderStudyStore(target).get(study.id)?.documentId, documentId);
+	assert.equal(createReaderStudyStore(target).get(study.id)?.title, "Renamed on an older build");
 });

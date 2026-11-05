@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createReaderStudyClient } from "../components/reader-study-client.ts";
-import { READER_STUDIES_KEY } from "../src/core/reader-study.ts";
+import { READER_STUDIES_KEY, type ReaderStudyRecord } from "../src/core/reader-study.ts";
 
 const passage = { documentName: "Example.pdf", page: 7, text: "Only this selected passage is sent.", question: "Explain the connection.", mode: "teach" as const };
+const documentId = "a1".repeat(32);
 const configured = { settings: { models: {
 	strong: { model: { provider: "test", id: "strong" } },
 	cheap: { model: { provider: "test", id: "cheap" } },
@@ -67,6 +68,57 @@ test("practice creates a native practice session and uses its learning prompt", 
 	await client.start({ ...passage, mode: "practice" });
 	assert.equal(JSON.parse(String(calls[1]?.init?.body)).kind, "practice");
 	assert.match(JSON.parse(String(calls.find(call => call.url === "/api/chat")?.init?.body)).input.text, /one problem at a time/);
+});
+
+test("whole-PDF study waits for the durable attachment acknowledgement before one AI input", async () => {
+	let acknowledge!: () => void;
+	let linked!: () => void;
+	const linkRequest = new Promise<void>(resolve => { linked = resolve; });
+	const { calls, fetchImpl } = transport((url, init) => {
+		if (url === "/api/settings") return Response.json(configured);
+		if (url === "/api/chats") return Response.json({ id: "chat_full" });
+		if (url === "/api/reader/studies") {
+			const body = JSON.parse(String(init?.body)) as { records: ReaderStudyRecord[] };
+			assert.equal(body.records[0]?.documentId, documentId);
+			assert.equal(body.records[0]?.id, "chat_full");
+			return new Promise<Response>(resolve => {
+				acknowledge = () => resolve(Response.json({ records: body.records.map(record => ({ ...record, state: "ready" })) }));
+				linked();
+			});
+		}
+		assert.equal(url, "/api/chat");
+		const body = JSON.parse(String(init?.body)) as { chatId: string; input: { type: string; text: string } };
+		assert.equal(body.chatId, "chat_full");
+		assert.match(body.input.text, /study_pdf/);
+		assert.doesNotMatch(JSON.stringify(body), /a1a1a1a1|private-folder/);
+		return Response.json({ ok: true });
+	});
+	const client = createReaderStudyClient({ fetchImpl, storage: store() });
+	const starting = client.start({ ...passage, documentName: "C:\\private-folder\\Example.pdf", documentId });
+	await linkRequest;
+	assert.equal(client.list()[0]?.documentId, documentId);
+	assert.equal(calls.some(call => call.url === "/api/chat"), false);
+	acknowledge();
+	assert.equal((await starting).id, "chat_full");
+	assert.equal(calls.filter(call => call.url === "/api/chat").length, 1);
+	assert.equal(client.list()[0]?.state, "working");
+});
+
+test("an unconfirmed whole-PDF attachment prevents AI admission while excerpt mode still works", async () => {
+	for (const response of [() => Response.json({ error: "Disk error" }, { status: 500 }), () => Response.json({ records: [] })]) {
+		const { calls, fetchImpl } = transport(url => {
+			if (url === "/api/settings") return Response.json(configured);
+			if (url === "/api/chats") return Response.json({ id: "chat_reader" });
+			if (url === "/api/reader/studies") return response();
+			return Response.json({ ok: true });
+		});
+		const client = createReaderStudyClient({ fetchImpl });
+		await assert.rejects(client.start({ ...passage, documentId }), /saved PDF could not be attached/);
+		assert.equal(client.list()[0]?.state, "error");
+		assert.equal(calls.some(call => call.url === "/api/chat"), false);
+		assert.equal((await client.start(passage)).id, "chat_reader");
+		assert.equal(calls.filter(call => call.url === "/api/chat").length, 1);
+	}
 });
 
 test("missing model setup and invalid passage never create empty sessions", async () => {
@@ -233,4 +285,19 @@ test("legacy browser links are migrated to the durable store during refresh", as
 	});
 	await createReaderStudyClient({ fetchImpl, storage }).refresh();
 	assert.equal((migrated[0] as { id: string }).id, "chat_legacy");
+});
+
+test("refresh upgrades a legacy browser link with the durable whole-PDF attachment", async () => {
+	const storage = store();
+	const legacy = { id: "chat_reader", title: "Study", documentName: "Example.pdf", page: 7, quote: passage.text, mode: "teach", createdAt: "2026-11-04T08:00:00.000Z", state: "ready" };
+	storage.setItem(READER_STUDIES_KEY, JSON.stringify([legacy]));
+	const { calls, fetchImpl } = transport(url => {
+		if (url === "/api/chats") return Response.json({ chats: [{ id: legacy.id }] });
+		if (url === "/api/reader/studies") return Response.json({ records: [{ ...legacy, documentId }] });
+		throw new Error(`Unexpected request ${url}`);
+	});
+	const client = createReaderStudyClient({ fetchImpl, storage });
+	assert.equal((await client.refresh())[0]?.documentId, documentId);
+	assert.equal(client.list()[0]?.documentId, documentId);
+	assert.equal(calls.some(call => call.url === "/api/chat"), false);
 });

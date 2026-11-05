@@ -69,14 +69,25 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 		commit(list().map(record => record.id === id ? { ...record, ...changes } : record));
 	}
 
-	async function persistLinks(records: ReaderStudyRecord[]) {
-		const pending = records.filter(record => !durableIds.has(record.id));
+	async function persistLinks(records: ReaderStudyRecord[], requireAttachment = false) {
+		const pending = records.filter(record => requireAttachment || !durableIds.has(record.id));
 		if (!pending.length) return;
 		try {
 			const response = await fetchImpl("/api/reader/studies", { method: "POST", headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ records: pending }), signal: AbortSignal.timeout(15_000) });
-			if (response.ok) for (const record of pending) durableIds.add(record.id);
-		} catch { /* Keep the browser index; the next refresh retries its migration. */ }
+			if (!response.ok) throw new Error("The passage link could not be saved.");
+			if (requireAttachment) {
+				const body = await json(response);
+				const saved = Array.isArray(body?.records) ? parseReaderStudies(JSON.stringify(body.records)) : [];
+				if (!pending.every(record => saved.some(link => link.id === record.id && link.documentId === record.documentId))) {
+					throw new Error("The saved PDF attachment was not confirmed.");
+				}
+			}
+			for (const record of pending) durableIds.add(record.id);
+		} catch (failure) {
+			if (requireAttachment) throw failure;
+			// Keep the browser index. The next refresh retries its migration.
+		}
 	}
 
 	async function durableLinks(): Promise<ReaderStudyRecord[]> {
@@ -121,14 +132,21 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 		const id = created.id;
 		const title = typeof created.title === "string" && created.title.trim()
 			? created.title.slice(0, 500) : requestedTitle;
-		commit([{
+		const record: ReaderStudyRecord = {
 			id, title, documentName: input.documentName, page: input.page,
+			...(input.documentId ? { documentId: input.documentId } : {}),
 			quote: input.text.slice(0, 300), mode: input.mode,
 			createdAt: new Date().toISOString(), state: "starting",
-		}, ...list().filter(record => record.id !== id)]);
+		};
+		commit([record, ...list().filter(existing => existing.id !== id)]);
 		// Store source links server-side as well as in the browser so cloud sync
 		// can restore them on a different computer without another billed turn.
-		await persistLinks(list().filter(record => record.id === id));
+		try { await persistLinks([record], Boolean(record.documentId)); }
+		catch {
+			const error = "The saved PDF could not be attached. Try starting the study again.";
+			update(id, { state: "error", error });
+			throw new Error(error);
+		}
 
 		let admitted: Response;
 		try {
@@ -165,7 +183,10 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 		if (version !== refreshVersion) return list();
 		const local = list();
 		const mergedLinks = new Map(remoteLinks.map(record => [record.id, record]));
-		for (const record of local) mergedLinks.set(record.id, record);
+		for (const record of local) {
+			const documentId = mergedLinks.get(record.id)?.documentId;
+			mergedLinks.set(record.id, documentId ? { ...record, documentId } : record);
+		}
 		commit([...mergedLinks.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
 		const byId = new Map(body.chats.flatMap((value: unknown) => {
 			const chat = object(value);

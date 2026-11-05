@@ -106,7 +106,7 @@ function studyPayload(value: unknown, id: string): Record<string, unknown> {
 	const parsed = parseReaderStudies(JSON.stringify([value]))[0];
 	if (!parsed || parsed.id !== id) throw new Error("Invalid passage-to-session link.");
 	// Busy/waiting/error are derived from each device's live session, never synced.
-	return { ...pick(parsed as unknown as Record<string, unknown>, ["id", "title", "documentName", "page", "quote", "mode", "createdAt"]), state: "ready" };
+	return { ...pick(parsed as unknown as Record<string, unknown>, ["id", "title", "documentName", "documentId", "page", "quote", "mode", "createdAt"]), state: "ready" };
 }
 
 function ledgerRows(directory: string, ledger: Ledger): Record<string, unknown>[] {
@@ -196,6 +196,11 @@ export function applySyncRecord(directory: string, incoming: IncomingSyncRecord)
 		const file = safePath(directory, ...locations, `${id}.json`);
 		if (deletion) { removeFile(directory, file); return; }
 		const value = incoming.kind === "chat" ? chatPayload(incoming.payload, id) : incoming.kind === "reader-session" ? readerPayload(incoming.payload, id) : studyPayload(incoming.payload, id);
+		if (incoming.kind === "reader-study" && !value.documentId && fs.existsSync(file)) {
+			// Older devices can sync passage links without the attachment field.
+			const previous = studyPayload(readJson(directory, file), id);
+			if (previous.documentId) value.documentId = previous.documentId;
+		}
 		if (Buffer.byteLength(stableSyncJson(value)) > MAX_RECORD_BYTES) throw new Error("Cloud session is too large.");
 		writeJson(directory, file, value); return;
 	}

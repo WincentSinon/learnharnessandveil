@@ -14,6 +14,8 @@ import { SubscriptionRequestCycle, type SubscriptionDispatchLifecycle } from "..
 import { reconstructRequestCause } from "../core/native-messages.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
+import { createStudyPdfTool } from "../agent/tools/study-pdf.ts";
+import { readerStudyStore } from "../store/reader-studies.ts";
 import type { ModelRole } from "../../config.ts";
 import {
 	deliverJobResult,
@@ -440,6 +442,7 @@ export async function handleChatInput(
 		},
 		restoreAutomatic: (automaticIds, retainedIds) => restoreUncommittedAutomatic(chatId, constructed, automaticIds, retainedIds),
 	});
+	const studySource = readerStudyStore.get(chatId);
 	const agentOpts: AgentBuildOptions = {
 		engine,
 		callPurpose,
@@ -447,6 +450,7 @@ export async function handleChatInput(
 		messages: asAgentMessages(agentMessages),
 		onUsage: collectUsage,
 		toolToggles: effective.agent.tools,
+		...(studySource?.documentId ? { studyPdfTool: createStudyPdfTool(studySource.documentId, studySource.page) } : {}),
 		// Debug (owner, 2026-10-04): teacher/prober raw provider events under
 		// LH_PROVIDER_EVENTS=1 (provider-events.ts); no-op otherwise.
 		chatId,

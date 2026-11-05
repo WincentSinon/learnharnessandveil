@@ -21,6 +21,8 @@ The publishable key identifies your project; your account login identifies which
 
 Click **Save session** for a PDF before expecting it in the cloud library. Merely opening a file does not save a reading session. Each PDF is identified by its content hash and uploaded once for the current account/project, rather than on every page change. Unchanged chat contents are not downloaded on every sync check.
 
+Use the same current Veil Study version on both computers for **Use whole PDF** study sessions. Wait for the PDF and its study session to sync before resuming the conversation on the other computer.
+
 Provider API keys, provider login credentials, downloaded neural voices, caches, window settings and debug logs stay on each computer. Configure your AI provider and install voices separately on the laptop. Arbitrary files referenced by local paths inside conversations or imported-source metadata are **not** uploaded; copy those files separately if a task needs them on another computer.
 
 ## Offline, conflicts and deletion

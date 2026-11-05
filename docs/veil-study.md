@@ -7,8 +7,8 @@ Veil Study is a personal productivity fork of [LearnHarness](https://github.com/
 1. Launch **Veil Study**. The floating reader is the initial desktop window.
 2. Choose a PDF or drop one into the reader. Scroll with the pointer over the document; use the page controls or Page Up / Page Down to jump.
 3. Adjust **Opacity** from 20% to 100%, and toggle the pin to keep the reader above other windows.
-4. Select a passage on one page, right-click, and choose **Study this passage** or **Practice this passage**.
-5. Optionally add a question, then start the session. The reader stays in place. You can continue reading, switch PDFs, or return to another application.
+4. Drag across a word, sentence, or paragraph on one page, then right-click and choose **Study this passage** or **Practice this passage**.
+5. Add an optional question. Turn on **Use whole PDF** if the tutor needs context beyond the selection, then start the session. The reader stays in place while the tutor works.
 6. **Study sessions** shows all indexed background sessions, including work started from other documents. “Working in background” means the server is active; “Your input is ready” means it has a question or problem for you. These updates do not bring a window to the front.
 7. Choose **Open session** when you want the full tutor interface. It retains LearnHarness's structured question, answer, practice, and lesson controls. **Return to passage** is available when the corresponding source filename is open.
 
@@ -26,6 +26,12 @@ Read aloud uses the downloaded local neural voices or a Windows desktop voice. I
 
 Neural speech normalizes wrapped text and joins dictionary-recognized words split across lines, such as `desk-` / `top`. Genuine compounds, acronyms, URLs, and suspended compounds retain their hyphens. Ambiguous typography can still require checking. **Highlight** marks the sentence actually playing; exact word-level timing is not provided by these voices.
 
+## Study with the whole PDF
+
+**Use whole PDF** attaches the open document to the new study or practice session. The highlighted text sets the starting point. The tutor can consult PDF bookmarks, search for terms, and cite relevant pages. Image-only pages need OCR before their text can be used.
+
+The option saves a copy in **My reading** and uses your existing library sync settings. The configured AI provider receives text from the pages the tutor consults. The saved PDF stays linked to the session when you return to it.
+
 ## Save and resume reading
 
 Choose **Save session** after opening a PDF. The app keeps a local, content-addressed PDF copy and automatically saves page/scroll position, zoom, voice, speed, chapter selection, drafts, and understanding feedback. **My reading** lists saved sessions. Resuming restores the PDF and preferences silently; click **Read aloud** yourself when ready. Moving the original PDF does not break the saved copy. PDF passwords are not saved.
@@ -42,13 +48,13 @@ Open the reader's gear icon. Configure a provider or supported subscription conn
 
 PDF reading does not require a model. Starting study requires configured models; missing configuration produces a local explanation before an empty session is created. Live requests use your selected provider and its billing/connection rules. Provider authentication must be completed by you.
 
-The floating reader sends the selected text, filename, page, and your question into the session. It does not automatically import or upload the whole PDF. Source text is labeled as quoted material. Each new study action is explicit; uncertain request failures are retained for inspection rather than automatically retried.
+The floating reader starts the session with the selected text, filename, page, and your question. Source text is labeled as quoted material. The session is kept for inspection if the app cannot confirm whether a request started.
 
 ## Local data and scope
 
 - The desktop fork uses a separate **Veil Study** application profile, independent from upstream LearnHarness and the original Veil PDF Overlay prototype.
 - LearnHarness owns canonical sessions, model configuration, and learning data. The reader keeps a small local index of session IDs, source filenames/pages, and short passage previews; it stores no API keys or PDF bytes in that index.
-- PDFs remain local and are limited to 100 MB. Text selection needs a text layer; scanned pages need OCR in another tool. Password-protected PDFs prompt for their password.
+- The reader opens PDFs up to 100 MB. Saved documents follow your Cloud sync settings. Text selection needs a text layer. Run OCR on scanned pages to make their text searchable. Password-protected PDFs prompt for their password.
 - Closing/hiding the reader retains the open document for the current app run. After restarting, use **My reading** to restore a saved PDF; unsaved documents must be reopened. Saved reading sessions use PDF SHA-256 identity. Older passage-to-study links still match by filename and page.
 - The preview does not install upstream updates over the fork. Automatic updating stays disabled until a deliberate fork-specific release feed is configured.
 - The project and upstream code retain the **AGPL-3.0-only** license. Original author attribution is retained.

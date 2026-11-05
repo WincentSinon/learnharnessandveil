@@ -9,7 +9,7 @@ import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { ReaderSessions, openReaderSession, startPassageSession } from "@/components/reader-sessions";
 import { EMPTY_NARRATION, ReaderNarration } from "@/components/reader-narration";
 import { createNeuralSpeechBridge, neuralSpeechStatus, setupNeuralSpeech, type NeuralStatus } from "@/components/reader-neural-speech";
-import { ReaderWorkspace } from "@/components/reader-workspace";
+import { ReaderWorkspace, type ReaderWorkspaceHandle } from "@/components/reader-workspace";
 import { speechDictionary } from "@/components/reader-dictionaries";
 import { buildPdfSpeech, type PdfSpeech } from "@/src/core";
 import type { ReaderChapter, ReaderSession } from "@/src/core";
@@ -38,6 +38,7 @@ type Page = {
 	textTask?: TextLayer;
 };
 type Passage = { text: string; page: Page; marks: Mark[]; documentName: string; version: number };
+type PassageSelection = Passage | "across-pages" | "too-long";
 type ReaderCallbacks = {
 	documentChanging: () => void;
 	loading: (busy: boolean) => void;
@@ -85,6 +86,7 @@ class PdfSurface {
 	private opening = false;
 	private disposed = false;
 	private scrollFrame = 0;
+	private selectionBeforeMenu: { page: Page; version: number; selection: PassageSelection } | null = null;
 	private resizeTimer: ReturnType<typeof setTimeout> | undefined;
 	private observer: IntersectionObserver;
 	private resizeObserver: ResizeObserver;
@@ -108,10 +110,12 @@ class PdfSurface {
 		this.resizeObserver.observe(viewport);
 		viewport.addEventListener("scroll", this.onScroll, { passive: true });
 		viewport.addEventListener("contextmenu", this.onContextMenu);
+		document.addEventListener("pointerdown", this.onPointerDown, true);
 	}
 
 	async load(file: PdfFile) {
 		const loadVersion = ++this.loadVersion;
+		this.selectionBeforeMenu = null;
 		this.opening = true;
 		this.callbacks.loading(true);
 		this.callbacks.documentChanging();
@@ -291,6 +295,7 @@ class PdfSurface {
 		this.scale = Math.max(0.25, Math.min(3, value));
 		this.fit = fit;
 		this.queue = [];
+		this.selectionBeforeMenu = null;
 		window.getSelection()?.removeAllRanges();
 		this.callbacks.clearSelection();
 		for (const page of this.pages) {
@@ -330,6 +335,9 @@ class PdfSurface {
 	}
 
 	getFile() { return this.sourceFile; }
+	ownsPassage(passage: Passage) {
+		return !this.opening && !this.disposed && passage.version === this.version && this.pages[passage.page.number - 1] === passage.page;
+	}
 	position() {
 		const page = this.pages[this.current - 1];
 		return { pageCount: this.pdf?.numPages || 1, page: this.current, scrollFraction: page ? Math.max(-1, Math.min(2, (this.viewport.scrollTop - page.node.offsetTop) / (page.height * this.scale))) : 0, scale: this.scale, fit: this.fit };
@@ -450,31 +458,64 @@ class PdfSurface {
 		});
 	};
 
-	private onContextMenu = (event: MouseEvent) => {
-		if ((event.target as Element).closest?.("[data-reader-bubble]")) return;
+	private pageAt(target: EventTarget | null): Page | undefined {
+		const node = target instanceof Element ? target.closest<HTMLElement>("[data-page]") : null;
+		const page = node ? this.pages[Number(node.dataset.page) - 1] : undefined;
+		return page?.node === node ? page : undefined;
+	}
+
+	private captureSelection(clickedPage: Page): PassageSelection | null {
 		const selection = window.getSelection();
-		if (!selection?.rangeCount || selection.isCollapsed) return;
+		if (!selection?.rangeCount || selection.isCollapsed) return null;
 		const text = selection.toString().trim();
-		if (!text) return;
+		if (!text) return null;
 		const range = selection.getRangeAt(0);
 		const start = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer as Element : range.startContainer.parentElement;
 		const end = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer as Element : range.endContainer.parentElement;
-		if (!start?.closest(".textLayer") || !end?.closest(".textLayer")) return;
-		const pageNode = start.closest<HTMLElement>("[data-page]");
-		if (!pageNode || end.closest("[data-page]") !== pageNode) {
-			this.callbacks.status("Select a passage within one page to link it to a study session.");
-			return;
-		}
-		event.preventDefault();
-		if (text.length > 12_000) { this.callbacks.status("Choose a shorter passage (up to 12,000 characters).", true); return; }
-		const page = this.pages[Number(pageNode.dataset.page) - 1];
-		if (!page) return;
-		const bounds = pageNode.getBoundingClientRect();
+		if (!start?.closest(".textLayer") || !end?.closest(".textLayer")) return null;
+		const page = this.pageAt(start);
+		const lastPage = this.pageAt(end);
+		if (!page || !lastPage || clickedPage.number < page.number || clickedPage.number > lastPage.number) return null;
+		if (page !== lastPage) return "across-pages";
+		if (text.length > 12_000) return "too-long";
+		const bounds = page.node.getBoundingClientRect();
+		if (!bounds.width || !bounds.height) return null;
 		const marks = [...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0).map((rect) => ({
 			x: (rect.left - bounds.left) / bounds.width, y: (rect.top - bounds.top) / bounds.height,
 			width: rect.width / bounds.width, height: rect.height / bounds.height,
 		}));
-		if (marks.length) this.callbacks.selection({ text, page, marks, documentName: this.documentName, version: this.version }, event.clientX, event.clientY);
+		return marks.length ? { text, page, marks, documentName: this.documentName, version: this.version } : null;
+	}
+
+	private onPointerDown = (event: PointerEvent) => {
+		this.selectionBeforeMenu = null;
+		if (event.button !== 2 || this.opening || this.disposed) return;
+		const page = this.pageAt(event.target);
+		if (!page) return;
+		// Chromium can collapse the highlighted text during a secondary click.
+		// Capture its text and rectangles before the click changes selection.
+		const selection = this.captureSelection(page);
+		if (selection) this.selectionBeforeMenu = { page, version: this.version, selection };
+	};
+
+	private onContextMenu = (event: MouseEvent) => {
+		const previous = this.selectionBeforeMenu;
+		this.selectionBeforeMenu = null;
+		if (this.opening || this.disposed || (event.target instanceof Element && event.target.closest("[data-reader-bubble]"))) return;
+		const page = this.pageAt(event.target);
+		if (!page) return;
+		const selection = previous?.page === page && previous.version === this.version ? previous.selection : this.captureSelection(page);
+		if (!selection) return;
+		event.preventDefault();
+		if (selection === "across-pages") {
+			this.callbacks.status("Select a passage within one page to link it to a study session.");
+			return;
+		}
+		if (selection === "too-long") {
+			this.callbacks.status("Choose a shorter passage (up to 12,000 characters).", true);
+			return;
+		}
+		this.callbacks.selection(selection, event.clientX, event.clientY);
 	};
 
 	dispose() {
@@ -488,6 +529,7 @@ class PdfSurface {
 		this.resizeObserver.disconnect();
 		this.viewport.removeEventListener("scroll", this.onScroll);
 		this.viewport.removeEventListener("contextmenu", this.onContextMenu);
+		document.removeEventListener("pointerdown", this.onPointerDown, true);
 		for (const page of this.pages) { page.renderTask?.cancel(); page.textTask?.cancel(); }
 		void this.loadingTask?.destroy().catch(() => {});
 		void this.pdf?.loadingTask.destroy().catch(() => {});
@@ -501,6 +543,7 @@ export function FloatingReader() {
 	const fileInput = useRef<HTMLInputElement>(null);
 	const passwordDialog = useRef<HTMLDialogElement>(null);
 	const studyRequest = useRef(0);
+	const readingWorkspace = useRef<ReaderWorkspaceHandle>(null);
 	const narration = useRef<ReaderNarration | null>(null);
 	const speechBridge = useRef<ReaderSpeechBridge | null>(null);
 	const pendingVoice = useRef<{ voice: string; rate: number } | null>(null);
@@ -528,6 +571,7 @@ export function FloatingReader() {
 	const [bubble, setBubble] = useState<Passage | null>(null);
 	const [mode, setMode] = useState<"teach" | "practice">("teach");
 	const [question, setQuestion] = useState("");
+	const [wholePdf, setWholePdf] = useState(false);
 	const [starting, setStarting] = useState(false);
 	const [studyError, setStudyError] = useState("");
 	const [started, setStarted] = useState<{ id: string; title: string } | null>(null);
@@ -542,7 +586,7 @@ export function FloatingReader() {
 	useEffect(() => {
 		if (!viewport.current || !pages.current) return;
 		const controller = new PdfSurface(viewport.current, pages.current, {
-			documentChanging: () => narration.current?.stop(),
+			documentChanging: () => { narration.current?.stop(); clearSelection(); },
 			loading: setPdfOpening,
 			status: report,
 			loaded: (name, count) => { setFileName(name); setPageCount(count); setDocumentVersion(value => value + 1); },
@@ -628,6 +672,7 @@ export function FloatingReader() {
 		setBubble(menu.passage);
 		setMode(nextMode);
 		setQuestion("");
+		setWholePdf(false);
 		setStarted(null);
 		setStudyError("");
 		setMenu(null);
@@ -636,17 +681,22 @@ export function FloatingReader() {
 
 	const startStudy = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!bubble || starting) return;
+		const controller = surface.current;
+		if (!bubble || starting || !controller?.ownsPassage(bubble)) return;
 		const request = ++studyRequest.current;
+		const stillCurrent = () => request === studyRequest.current && surface.current === controller && controller.ownsPassage(bubble);
 		setStarting(true);
 		setStudyError("");
 		try {
+			const document = wholePdf ? await readingWorkspace.current?.getStudyDocument() : undefined;
+			if (!stillCurrent()) return;
+			if (wholePdf && (!document || !/^[a-f0-9]{64}$/.test(document.documentId))) throw new Error("The saved PDF could not be linked. Try Save session, then start again.");
 			const session = await startPassageSession({ documentName: bubble.documentName, page: bubble.page.number,
-				text: bubble.text, question: question.trim(), mode });
-			if (request !== studyRequest.current) return;
+				text: bubble.text, question: question.trim(), mode, ...(document ? { documentId: document.documentId } : {}) });
+			if (!stillCurrent()) return;
 			setStarted(session);
 			report(`${mode === "practice" ? "Practice" : "Study"} started in the background. Keep reading.`);
-		} catch (error) { if (request === studyRequest.current) setStudyError(messageOf(error)); }
+		} catch (error) { if (stillCurrent()) setStudyError(messageOf(error)); }
 		finally { if (request === studyRequest.current) setStarting(false); }
 	};
 
@@ -658,7 +708,7 @@ export function FloatingReader() {
 		if (first && last) bubbleStyle = {
 			width,
 			left: Math.max(12, Math.min(first.x * bubble.page.node.clientWidth, bubble.page.node.clientWidth - width - 12)),
-			top: Math.max(12, Math.min((last.y + last.height) * bubble.page.node.clientHeight + 14, bubble.page.node.clientHeight - 330)),
+			top: Math.max(12, Math.min((last.y + last.height) * bubble.page.node.clientHeight + 14, bubble.page.node.clientHeight - 390)),
 		};
 	}
 
@@ -704,7 +754,7 @@ export function FloatingReader() {
 				{neural && !neural.ready && <button type="button" className={styles.voicePreview} disabled={neural.installing} onClick={() => { void setupNeuralSpeech().then(() => neuralSpeechStatus()).then(setNeural).catch(error => report(messageOf(error), true)); }}>{neural.installing ? "Installing voices…" : "Install neural voices"}</button>}
 				<div className={styles.speechStatus} role="status" data-testid="reader-speech-status" data-state={speech.status} title={speech.message}>{speech.message}{neural?.installing ? ` · ${neural.message}` : ""}</div>
 			</div>
-			<ReaderWorkspace documentName={fileName} documentVersion={documentVersion} page={page} pageCount={pageCount} loading={pdfOpening}
+			<ReaderWorkspace ref={readingWorkspace} documentName={fileName} documentVersion={documentVersion} page={page} pageCount={pageCount} loading={pdfOpening}
 				getFile={() => surface.current?.getFile() ?? null}
 				getState={() => ({ ...(surface.current?.position() ?? { pageCount: 1, page: 1, scrollFraction: 0, scale: 1, fit: true }), voice: speech.voice, rate: speech.rate })}
 				getChapters={() => surface.current?.chapters() ?? Promise.resolve([])}
@@ -735,8 +785,20 @@ export function FloatingReader() {
 					<header><span><SparklesIcon />{mode === "practice" ? "Practice this passage" : "Study this passage"}</span><button type="button" aria-label="Close passage bubble" onClick={closeBubble}><XIcon /></button></header>
 					<blockquote>{bubble.text.slice(0, 240)}{bubble.text.length > 240 ? "…" : ""}</blockquote>
 					{started ? <div className={styles.started}><strong>{mode === "practice" ? "Practice" : "Study"} is running in the background.</strong><p>Keep reading. The session list will show when your input is needed.</p><button type="button" className={styles.primaryButton} onClick={() => void openReaderSession(started.id).catch((error: unknown) => setStudyError(messageOf(error)))}>Open session ↗</button></div>
-						: <form onSubmit={(event) => void startStudy(event)}><label htmlFor="reader-question">What would you like to understand?</label><textarea id="reader-question" maxLength={2000} rows={2} placeholder="Optional: explain the idea, connect it to something, or test me…" value={question} onChange={(event) => setQuestion(event.target.value)} /><div className={styles.bubbleActions}><button type="button" aria-pressed={mode === "practice"} onClick={() => setMode(mode === "practice" ? "teach" : "practice")}><DumbbellIcon />{mode === "practice" ? "Practice mode" : "Study mode"}</button><button type="submit" className={styles.primaryButton} disabled={starting} data-testid={mode === "practice" ? "reader-start-practice" : "reader-start-study"}>{starting ? "Starting…" : mode === "practice" ? "Start practice" : "Start study"}</button></div></form>}
-					{studyError && <div className={styles.studyError} role="alert">{studyError}<button type="button" onClick={() => openSettings("agent")}>Open model settings</button></div>}
+						: <form onSubmit={(event) => void startStudy(event)}>
+							<label htmlFor="reader-question">What would you like to understand?</label>
+							<textarea id="reader-question" maxLength={2000} rows={2} placeholder="Optional: explain the idea, connect it to something, or test me…" value={question} disabled={starting} onChange={(event) => setQuestion(event.target.value)} />
+							<label className={styles.wholePdfOption}>
+								<input type="checkbox" checked={wholePdf} disabled={starting} aria-describedby="reader-whole-pdf-help" onChange={event => setWholePdf(event.target.checked)} />
+								Use whole PDF
+							</label>
+							<p className={styles.wholePdfHint} id="reader-whole-pdf-help">Saves the PDF in My reading so the tutor can look up relevant pages. Your library’s sync settings apply.</p>
+							<div className={styles.bubbleActions}>
+								<button type="button" aria-pressed={mode === "practice"} disabled={starting} onClick={() => setMode(mode === "practice" ? "teach" : "practice")}><DumbbellIcon />{mode === "practice" ? "Practice mode" : "Study mode"}</button>
+								<button type="submit" className={styles.primaryButton} disabled={starting} data-testid={mode === "practice" ? "reader-start-practice" : "reader-start-study"}>{starting ? "Starting…" : mode === "practice" ? "Start practice" : "Start study"}</button>
+							</div>
+						</form>}
+					{studyError && <div className={styles.studyError} role="alert">{studyError}{/^(Configure (?:a strong model|the strong, cheap, and vision models) in Settings|Connect the selected AI provider)/.test(studyError) && <button type="button" onClick={() => openSettings("agent")}>Open model settings</button>}</div>}
 					<footer>Page {bubble.page.number} · Selected text, question and source details</footer>
 				</section>
 			</>, bubble.page.annotations)}

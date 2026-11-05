@@ -56,17 +56,22 @@ export function standardFontsDir(): string {
 }
 
 async function openDocument(filePath: string) {
-	return openBytes(new Uint8Array(await fs.readFile(filePath)));
+	return openPdfBytes(new Uint8Array(await fs.readFile(filePath)));
 }
 
-async function openBytes(data: Uint8Array) {
+export async function openPdfBytes(data: Uint8Array) {
 	const pdfjs = await loadPdfjs();
 	// The legacy build in plain node runs on a main-thread fake worker (no
 	// workerSrc needed); teardown is the loading task's destroy().
 	// verbosity 0 = errors only — scanned PDFs (JBIG2 XObjects) otherwise
 	// flood the log with per-page warnings (live-smoke finding 2026-09-19).
 	const task = pdfjs.getDocument({ data, standardFontDataUrl: standardFontsDir(), verbosity: 0 });
-	return { doc: await task.promise, task };
+	try {
+		return { doc: await task.promise, task };
+	} catch (error) {
+		await task.destroy().catch(() => {});
+		throw error;
+	}
 }
 
 /** Concatenate a page's text items into a body string. */
@@ -173,9 +178,9 @@ export type PdfConversion =
 /** An uploaded PDF's pages as Markdown (the notes import's door). The page
  *  cap is checked before any page is read. */
 export async function convertPdf(data: Uint8Array, maxPages: number): Promise<PdfConversion> {
-	let opened: Awaited<ReturnType<typeof openBytes>>;
+	let opened: Awaited<ReturnType<typeof openPdfBytes>>;
 	try {
-		opened = await openBytes(data);
+		opened = await openPdfBytes(data);
 	} catch {
 		return { kind: "unreadable" };
 	}
