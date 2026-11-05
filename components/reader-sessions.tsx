@@ -52,6 +52,7 @@ export function ReaderSessions({ documentName, onReveal }: { documentName: strin
 	useServerEvent("turn-settled", refresh);
 	useServerEvent("chats-changed", refresh);
 	useServerEvent("record-changed", refresh);
+	useServerEvent("cloud-sync-changed", refresh);
 	useServerEvent("compaction-changed", refresh);
 	useServerResync(refresh);
 	useEffect(() => {

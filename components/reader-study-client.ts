@@ -43,6 +43,7 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 	let memory: ReaderStudyRecord[] = [];
 	let storageHealthy = Boolean(storage);
 	let refreshVersion = 0;
+	const durableIds = new Set<string>();
 
 	function list(): ReaderStudyRecord[] {
 		if (storageHealthy && storage) {
@@ -66,6 +67,28 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 
 	function update(id: string, changes: Partial<ReaderStudyRecord>) {
 		commit(list().map(record => record.id === id ? { ...record, ...changes } : record));
+	}
+
+	async function persistLinks(records: ReaderStudyRecord[]) {
+		const pending = records.filter(record => !durableIds.has(record.id));
+		if (!pending.length) return;
+		try {
+			const response = await fetchImpl("/api/reader/studies", { method: "POST", headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ records: pending }), signal: AbortSignal.timeout(15_000) });
+			if (response.ok) for (const record of pending) durableIds.add(record.id);
+		} catch { /* Keep the browser index; the next refresh retries its migration. */ }
+	}
+
+	async function durableLinks(): Promise<ReaderStudyRecord[]> {
+		await persistLinks(list());
+		try {
+			const response = await fetchImpl("/api/reader/studies", { signal: AbortSignal.timeout(15_000) });
+			const body = await json(response);
+			if (!response.ok || !Array.isArray(body?.records)) return [];
+			const records = parseReaderStudies(JSON.stringify(body.records));
+			for (const record of records) durableIds.add(record.id);
+			return records;
+		} catch { return []; }
 	}
 
 	async function start(raw: PassageStudyInput): Promise<{ id: string; title: string }> {
@@ -103,6 +126,9 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 			quote: input.text.slice(0, 300), mode: input.mode,
 			createdAt: new Date().toISOString(), state: "starting",
 		}, ...list().filter(record => record.id !== id)]);
+		// Store source links server-side as well as in the browser so cloud sync
+		// can restore them on a different computer without another billed turn.
+		await persistLinks(list().filter(record => record.id === id));
 
 		let admitted: Response;
 		try {
@@ -131,10 +157,16 @@ export function createReaderStudyClient({ fetchImpl, storage, onChange }: Reader
 		// A passage may be submitted while this snapshot is in flight. An old
 		// list response cannot prove that a newly indexed session was deleted.
 		const requestedIds = new Set(list().map(record => record.id));
-		const response = await fetchImpl("/api/chats", { signal: AbortSignal.timeout(15_000) });
+		const [response, remoteLinks] = await Promise.all([
+			fetchImpl("/api/chats", { signal: AbortSignal.timeout(15_000) }), durableLinks(),
+		]);
 		const body = await json(response);
 		if (!response.ok || !Array.isArray(body?.chats)) throw new Error(responseError(body, "Could not refresh study sessions."));
 		if (version !== refreshVersion) return list();
+		const local = list();
+		const mergedLinks = new Map(remoteLinks.map(record => [record.id, record]));
+		for (const record of local) mergedLinks.set(record.id, record);
+		commit([...mergedLinks.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
 		const byId = new Map(body.chats.flatMap((value: unknown) => {
 			const chat = object(value);
 			return typeof chat?.id === "string" ? [[chat.id, chat] as const] : [];

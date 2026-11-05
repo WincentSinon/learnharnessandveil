@@ -91,4 +91,5 @@ export * from "./coverage.ts";
 export * from "./session-markdown.ts";
 
 export * from "./reader-session.ts";
+export * from "./reader-cloud.ts";
 export * from "./pdf-speech.ts";

@@ -52,6 +52,7 @@ import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
 import { ChatGPTUIProvider } from "./chatgpt-connection.tsx";
 import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
+import { CloudSyncSection } from "./cloud-sync-section.tsx";
 
 /** Owner (2026-09-20): hints earn their place — mechanics-explaining
  *  prose is out; only the keyboard note stays (storage location is a
@@ -59,6 +60,7 @@ import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
 const SECTIONS = [
 	{ id: "keys", label: "Providers" },
 	{ id: "agent", label: "Agent" },
+	{ id: "cloud-sync", label: "Cloud sync" },
 	{ id: "appearance", label: "Appearance" },
 	{ id: "graph", label: "Graph" },
 	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
@@ -393,6 +395,11 @@ export function SettingsDialogBody({
 											void write("compaction", next)
 										}
 									/>
+								</SettingsSection>
+							)}
+							{active === "cloud-sync" && (
+								<SettingsSection title="Cloud sync" testid="section-cloud-sync">
+									<CloudSyncSection />
 								</SettingsSection>
 							)}
 							{active === "appearance" && (

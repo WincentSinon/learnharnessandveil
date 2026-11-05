@@ -56,6 +56,10 @@ export * from "./custom-provider.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
 
 export { readerStore } from "./stores.ts";
+export { readerStudyStore } from "../store/reader-studies.ts";
+export { readerSessionFingerprint, ReaderSessionConflictError } from "../store/reader-sessions.ts";
+export { readerCloudConflictResponse, preserveReaderCloudConflict } from "./reader-cloud.ts";
+export { cloudSyncResponse, cloudSyncSetupResponse } from "./cloud-sync-http.ts";
 export { startReaderCheck, readReaderAttempt } from "./reader-check.ts";
 export { neuralStatus, installNeuralVoices, synthesizeNeural } from "./reader-neural-speech.ts";
 export { readReaderSessionUpload, ReaderUploadError } from "./reader-session-upload.ts";

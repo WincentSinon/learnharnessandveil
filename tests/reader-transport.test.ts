@@ -23,6 +23,7 @@ function transport(handler?: (url: string, init?: RequestInit) => Response | Pro
 		if (handler) return handler(String(url), init);
 		if (url === "/api/settings") return Response.json(configured);
 		if (url === "/api/chats" && init?.method === "POST") return Response.json({ id: "chat_reader", title: "A focused study" });
+		if (url === "/api/reader/studies") return Response.json({ records: [] });
 		if (url === "/api/chat") return Response.json({ ok: true });
 		throw new Error(`Unexpected request: ${url}`);
 	}) as typeof fetch;
@@ -35,6 +36,7 @@ test("background start persists source mapping before one admitted text input an
 	const { calls, fetchImpl } = transport((url, init) => {
 		if (url === "/api/settings") return Response.json(configured);
 		if (url === "/api/chats") return Response.json({ id: "chat_reader", title: "A focused study" });
+		if (url === "/api/reader/studies") return Response.json({ records: [] });
 		if (url === "/api/chat") {
 			const saved = JSON.parse(storage.getItem(READER_STUDIES_KEY) || "[]");
 			sourceSavedBeforeAdmission = saved[0]?.id === "chat_reader" && saved[0]?.state === "starting";
@@ -52,7 +54,7 @@ test("background start persists source mapping before one admitted text input an
 	const client = createReaderStudyClient({ fetchImpl, storage });
 	assert.deepEqual(await client.start(passage), { id: "chat_reader", title: "A focused study" });
 	assert.equal(sourceSavedBeforeAdmission, true);
-	assert.deepEqual(calls.map(call => call.url), ["/api/settings", "/api/chats", "/api/chat"]);
+	assert.deepEqual(calls.map(call => call.url), ["/api/settings", "/api/chats", "/api/reader/studies", "/api/chat"]);
 	assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { title: "Study: Example.pdf · p. 7" });
 	assert.equal(client.list()[0]?.state, "working");
 	assert.equal(client.list()[0]?.page, 7);
@@ -64,7 +66,7 @@ test("practice creates a native practice session and uses its learning prompt", 
 	const client = createReaderStudyClient({ fetchImpl });
 	await client.start({ ...passage, mode: "practice" });
 	assert.equal(JSON.parse(String(calls[1]?.init?.body)).kind, "practice");
-	assert.match(JSON.parse(String(calls[2]?.init?.body)).input.text, /one problem at a time/);
+	assert.match(JSON.parse(String(calls.find(call => call.url === "/api/chat")?.init?.body)).input.text, /one problem at a time/);
 });
 
 test("missing model setup and invalid passage never create empty sessions", async () => {
@@ -200,4 +202,35 @@ test("overlapping refreshes adopt the newer snapshot when responses arrive out o
 	snapshots[0]?.(Response.json({ chats: [{ id: "chat_reader", busy: true }] }));
 	await older;
 	assert.equal(client.list()[0]?.state, "waiting");
+});
+
+test("a second computer restores cloud passage links with empty browser storage and no AI admission", async () => {
+	const saved = { id: "chat_remote", title: "Study Linux", documentName: "Linux.pdf", page: 3,
+		quote: "A module adds functionality.", mode: "teach", createdAt: "2026-11-05T08:00:00.000Z", state: "ready" };
+	const { calls, fetchImpl } = transport((url, init) => {
+		if (url === "/api/reader/studies" && !init?.method) return Response.json({ records: [saved] });
+		if (url === "/api/chats") return Response.json({ chats: [{ id: saved.id, pendingQuestion: true, title: saved.title }] });
+		throw new Error(`Unexpected request ${url}`);
+	});
+	const client = createReaderStudyClient({ fetchImpl, storage: store() });
+	assert.deepEqual(client.list(), []);
+	const records = await client.refresh();
+	assert.equal(records[0]?.id, saved.id); assert.equal(records[0]?.state, "waiting");
+	assert.equal(records[0]?.page, 3); assert.equal(calls.some(call => call.url === "/api/chat"), false);
+});
+
+test("legacy browser links are migrated to the durable store during refresh", async () => {
+	const storage = store(); storage.setItem(READER_STUDIES_KEY, JSON.stringify([{ id: "chat_legacy", title: "Legacy", documentName: "Old.pdf", page: 1,
+		quote: "An older passage.", mode: "teach", createdAt: "2026-11-04T08:00:00.000Z", state: "ready" }]));
+	let migrated: unknown[] = [];
+	const { fetchImpl } = transport((url, init) => {
+		if (url === "/api/chats") return Response.json({ chats: [{ id: "chat_legacy" }] });
+		if (url === "/api/reader/studies") {
+			if (init?.method === "POST") migrated = JSON.parse(String(init.body)).records;
+			return Response.json({ records: migrated });
+		}
+		throw new Error("Unexpected request");
+	});
+	await createReaderStudyClient({ fetchImpl, storage }).refresh();
+	assert.equal((migrated[0] as { id: string }).id, "chat_legacy");
 });

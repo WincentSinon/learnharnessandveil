@@ -4,6 +4,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { PATHS } from "../../config.ts";
 import { readerId, readingState, type ReaderSession, type ReaderSessionSummary, type ReaderAttempt } from "../core/reader-session.ts";
 
+export function readerSessionFingerprint(session: ReaderSession): string { return createHash("sha256").update(JSON.stringify(session)).digest("hex"); }
+export class ReaderSessionConflictError extends Error {
+	constructor(readonly session: ReaderSession) { super("This reading session changed on another device. Refreshing before saving your draft."); }
+}
+
 export function createReaderStore(directory = path.join(PATHS.data, "reader")) {
 	const records = path.join(directory, "sessions"), documents = path.join(directory, "documents");
 	const file = (id: string) => path.join(records, `${readerId(id)}.json`);
@@ -44,8 +49,9 @@ export function createReaderStore(directory = path.join(PATHS.data, "reader")) {
 			const session: ReaderSession = { ...normalized, version: 1, id: `read_${randomUUID()}`, documentId, documentName: path.basename(name).slice(0, 256) || "Document.pdf", createdAt: now, updatedAt: now, attempts: [] };
 			write(session); return session;
 		},
-		patch(id: string, patch: unknown) {
+		patch(id: string, patch: unknown, expectedFingerprint?: string) {
 			const previous = get(id);
+			if (expectedFingerprint !== undefined && expectedFingerprint !== readerSessionFingerprint(previous)) throw new ReaderSessionConflictError(previous);
 			const session = { ...previous, ...readingState({ ...previous, ...(patch && typeof patch === "object" ? patch : {}) }, previous.pageCount), updatedAt: new Date().toISOString() };
 			write(session); return session;
 		},

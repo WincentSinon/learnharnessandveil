@@ -19,6 +19,11 @@ const runningKey = Symbol.for("veil.reader.checks");
 const globalJobs = globalThis as typeof globalThis & { [runningKey]?: Map<string, Promise<void>> };
 const running = globalJobs[runningKey] ??= new Map();
 
+export function isReaderCheckRunning(sessionId: string): boolean {
+	for (const key of running.keys()) if (key.startsWith(`${sessionId}:`)) return true;
+	return false;
+}
+
 export function checkSource(input: unknown, pageCount: number) {
 	const raw = input as { sessionId: string; requestId: string; page: number; chapter: unknown; chapterPages: Array<{ page: number; text: string }>; pageText: string; rephrase: string; language: ReaderLanguage };
 	readerId(raw?.sessionId); readerId(raw?.requestId);
