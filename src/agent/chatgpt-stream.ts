@@ -7,15 +7,19 @@ import type { AdmissionScope, ChatGPTDispatchLifecycle } from "./chatgpt-request
 import { capturePreparedBackgroundPayload } from "./background-capture.ts";
 
 const USAGE = "https://chatgpt.com/settings/usage";
-export function chatGPTStreamError(message: string): string {
-	if (/subscription_sharing_usage_limit_exceeded|quota|429/.test(message)) return `ChatGPT plan usage limit reached. Manage usage at ${USAGE}. No API-key fallback was used.`;
+export function chatGPTStreamError(message: string, status?: number): string {
+	if (status === 429 || /subscription_sharing_usage_limit_exceeded|rate_limit_exceeded|usage_limit_reached|quota|429/i.test(message)) return `ChatGPT plan usage limit reached. Manage usage at ${USAGE}. No API-key fallback was used.`;
 	if (/scope|authorization_context|permission/.test(message)) return "ChatGPT plan permission is missing. Reconnect in Providers and authorize plan use. No API-key fallback was used.";
-	if (/expired|invalid_grant|401|invalid_user/.test(message)) return "Your ChatGPT session expired. Reconnect in Providers. No API-key fallback was used.";
+	if (status === 401 || /expired|invalid_grant|401|invalid_user/.test(message)) return "Your ChatGPT session expired. Reconnect in Providers. No API-key fallback was used.";
 	if (/background|Background/.test(message)) return "ChatGPT background use is off in this app. Enable Allow background use for all ChatGPT accounts in Providers to run this work. No API-key fallback was used.";
-	if (/eligible|403/.test(message)) return "This ChatGPT account or workspace does not permit this request. Check ChatGPT settings; reconnecting may not change eligibility.";
+	if (status === 403 || /eligible|403/.test(message)) return "This ChatGPT account or workspace does not permit this request. Check ChatGPT settings; reconnecting may not change eligibility.";
 	if (/cancel|abort|closed|disconnect/i.test(message)) return "ChatGPT request cancelled or connection closed. No API-key fallback was used.";
 	if (/catalog|model/.test(message)) return "The selected model is unavailable for this ChatGPT account. Refresh Providers and explicitly choose an available model. No API-key fallback was used.";
 	if (/incomplete|terminal|interrupted|stop reason/.test(message)) return "ChatGPT returned an incomplete response. Retry when ready; no API-key fallback was used.";
+	if (status && status >= 500 && status < 600) return `ChatGPT returned a server error (HTTP ${status}). Retry in a moment. No API-key fallback was used.`;
+	if (status && status >= 400 && status < 500) return `ChatGPT rejected the request (HTTP ${status}). No API-key fallback was used.`;
+	if (/^(?:server_error|internal_server_error|overloaded)$/.test(message)) return "ChatGPT returned a server error. Retry in a moment. No API-key fallback was used.";
+	if (/connection error|fetch failed|network error|ECONNRESET|ENOTFOUND|ETIMEDOUT|timed out/i.test(message)) return "Veil Study could not complete the connection to ChatGPT. Check your connection, then retry. No API-key fallback was used.";
 	return "ChatGPT request failed. Check your connection and ChatGPT usage, then retry. No API-key fallback was used.";
 }
 
@@ -57,6 +61,7 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 			let failure = "";
 			let scope: AdmissionScope | undefined;
 			let committed = false;
+			let httpStatus: number | undefined;
 			let terminal = false;
 			const check = () => { if (signal.aborted || !scope || !chatGPTScopeCurrent(scope)) throw new Error("cancelled or catalog authority changed"); };
 			try {
@@ -75,12 +80,15 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 					signal,
 					maxRetries: 0,
 					headers: { "OpenAI-Beta": null, ...options?.headers },
-					fetch: (input, init) => {
+					fetch: async (input, init) => {
 						check();
 						if (committed) throw new Error("ChatGPT does not retry admitted requests");
 						lifecycle?.beforeDispatch(scope!);
 						committed = true;
-						return delegate(input, init);
+						const response = await delegate(input, init);
+						// The SDK's response observer runs only after a successful HTTP response.
+						httpStatus = response.status;
+						return response;
 					},
 					onPayload: async (raw, model) => {
 						const replacement = await options?.onPayload?.(raw, model);
@@ -111,7 +119,9 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 			} catch (err) {
 				if (terminal) return;
 				if (!committed) lifecycle?.noDispatch(await chatGPTDenial(scope, controller, options?.signal?.aborted === true, purpose));
-				partial = { ...partial, stopReason: signal.aborted ? "aborted" : "error", errorMessage: chatGPTStreamError(err instanceof Error ? err.message : "") };
+				const errorMessage = chatGPTStreamError(err instanceof Error ? err.message : "", httpStatus);
+				if (committed && !signal.aborted) console.warn(`[chatgpt] ${httpStatus ? `HTTP ${httpStatus}` : "No HTTP response"} | ${errorMessage}`);
+				partial = { ...partial, stopReason: signal.aborted ? "aborted" : "error", errorMessage };
 				output.push({ type: "error", reason: partial.stopReason as "error" | "aborted", error: partial });
 			} finally { release(); output.end(); }
 		})();

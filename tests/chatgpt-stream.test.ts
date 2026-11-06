@@ -113,6 +113,24 @@ test("no terminal completed is never success; late quota/incomplete streams are 
 	}
 });
 
+test("HTTP rejections keep a safe status in the failure without replaying the request", async () => {
+	const engine = piEngineForSpec({ provider: "chatgpt", id: model.id }, false);
+	for (const [status, message] of [[400, /rejected the request \(HTTP 400\)/], [503, /server error \(HTTP 503\)/]] as const) {
+		let calls = 0;
+		const stream = engine.streamFn(engine.model, context(), {
+			fetch: async () => {
+				calls++;
+				return Response.json({ error: { message: "private upstream diagnostic" } }, { status });
+			},
+		});
+		const failure = await stream.result();
+		assert.equal(calls, 1);
+		assert.equal(failure.stopReason, "error");
+		assert.match(failure.errorMessage ?? "", message);
+		assert.doesNotMatch(failure.errorMessage ?? "", /private upstream diagnostic/);
+	}
+});
+
 test("OAuth failure and background denial NEVER use ambient OPENAI_API_KEY", async () => {
 	requests = [];
 	for (const error of ["expired ChatGPT session", "Background use is off", "catalog unavailable", "quota exceeded"]) {
